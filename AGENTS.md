@@ -13,7 +13,14 @@ swift build -c release         # Release build
 
 ## Testing
 
-No automated test suite. Test manually:
+Pure parsing and policy logic lives in `Sources/KmsgCore` and is unit tested without
+KakaoTalk or the Accessibility API:
+
+```bash
+make test-core   # swift test for KmsgCoreTests (adds Swift Testing paths under Command Line Tools)
+```
+
+Everything that drives KakaoTalk is tested manually:
 
 ```bash
 .build/debug/kmsg status --verbose           # Check accessibility & app status

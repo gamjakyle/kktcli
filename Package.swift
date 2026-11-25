@@ -22,14 +22,26 @@ let package = Package(
                 "VersionGenTool",
             ]
         ),
+        // Pure parsing and policy logic (no Accessibility calls), unit tested by KmsgCoreTests.
+        .target(
+            name: "KmsgCore"
+        ),
         .executableTarget(
             name: "kmsg",
             dependencies: [
+                "KmsgCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             plugins: [
                 .plugin(name: "VersionGenPlugin"),
             ]
+        ),
+        // Lives next to the Python contract tests; the explicit path keeps it case-correct on
+        // case-sensitive file systems.
+        .testTarget(
+            name: "KmsgCoreTests",
+            dependencies: ["KmsgCore"],
+            path: "tests/KmsgCoreTests"
         ),
     ]
 )
