@@ -3,17 +3,17 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-READ_COMMAND = REPO_ROOT / "Sources" / "kmsg" / "Commands" / "ReadCommand.swift"
-KMSG_ENTRYPOINT = REPO_ROOT / "Sources" / "kmsg" / "kmsg.swift"
-MCP_SERVER_COMMAND = REPO_ROOT / "Sources" / "kmsg" / "Commands" / "MCPServerCommand.swift"
-CHAT_WINDOW_RESOLVER = REPO_ROOT / "Sources" / "kmsg" / "KakaoTalk" / "ChatWindowResolver.swift"
-MESSAGE_CONTEXT_RESOLVER = REPO_ROOT / "Sources" / "kmsg" / "KakaoTalk" / "MessageContextResolver.swift"
-TRANSCRIPT_READER = REPO_ROOT / "Sources" / "kmsg" / "KakaoTalk" / "TranscriptReader.swift"
+READ_COMMAND = REPO_ROOT / "Sources" / "kktcli" / "Commands" / "ReadCommand.swift"
+ENTRYPOINT = REPO_ROOT / "Sources" / "kktcli" / "kktcli.swift"
+MCP_SERVER_COMMAND = REPO_ROOT / "Sources" / "kktcli" / "Commands" / "MCPServerCommand.swift"
+CHAT_WINDOW_RESOLVER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "ChatWindowResolver.swift"
+MESSAGE_CONTEXT_RESOLVER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "MessageContextResolver.swift"
+TRANSCRIPT_READER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "TranscriptReader.swift"
 
 
 class ReadBackgroundSafeContractTests(unittest.TestCase):
     def test_entrypoint_uses_invoked_command_name_for_aliases(self) -> None:
-        source = KMSG_ENTRYPOINT.read_text(encoding="utf-8")
+        source = ENTRYPOINT.read_text(encoding="utf-8")
 
         self.assertIn("invokedCommandName", source)
         self.assertIn("CommandLine.arguments.first", source)
@@ -46,7 +46,7 @@ class ReadBackgroundSafeContractTests(unittest.TestCase):
     def test_mcp_startup_skips_status_check_by_default(self) -> None:
         source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
 
-        self.assertIn("KMSG_MCP_STARTUP_STATUS_CHECK", source)
+        self.assertIn("KKTCLI_MCP_STARTUP_STATUS_CHECK", source)
         self.assertIn('"status_check": "skipped"', source)
         self.assertIn('run(["status"], timeoutSec: 15.0)', source)
 

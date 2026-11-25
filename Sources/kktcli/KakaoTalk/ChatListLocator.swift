@@ -1,0 +1,333 @@
+import ApplicationServices.HIServices
+import Foundation
+import KktcliCore
+
+/// The main window's chat-list table.
+struct ChatListAccess {
+    let window: UIElement
+    let table: AXUIElement
+    /// The table's enclosing scroll area (its frame is the visible part of the list).
+    let scrollArea: AXUIElement?
+}
+
+struct LocatedChatRow {
+    let index: Int
+    let element: AXUIElement
+    let title: String
+    let summary: ChatRowSummary
+}
+
+/// Finds chat windows and chat-list rows for `read` using Accessibility reads only.
+///
+/// Row lookup reads one title label per row and stops at the first match, checks the
+/// registry's last-seen index first for `--chat-id`, and never posts input events.
+struct ChatListLocator {
+    static let mainWindowIdentifier = "Main Window"
+    static let transcriptScrollAreaIdentifier = "_NS:32"
+
+    let kakao: KakaoTalkApp
+    let runner: AXActionRunner
+
+    // MARK: Windows
+
+    func isMainWindow(_ window: UIElement) -> Bool {
+        window.identifier == Self.mainWindowIdentifier
+    }
+
+    /// Open chat windows (the main window is never a chat window).
+    func chatWindows() -> [UIElement] {
+        kakao.windows.filter { window in
+            (window.role ?? kAXWindowRole) == kAXWindowRole && !isMainWindow(window)
+        }
+    }
+
+    /// An open chat window titled exactly `title`; failing that, the only window whose
+    /// normalized title (no spaces, punctuation or symbols) matches.
+    func existingWindow(exactTitle title: String) -> UIElement? {
+        let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else { return nil }
+        let windows = chatWindows()
+        if let exact = windows.first(where: { Self.trimmed($0.title) == wanted }) {
+            return exact
+        }
+        // A team-chat / self-chat row title carries a room-type prefix its window title lacks.
+        let byRowTitle = windows.filter { RoomTitle.windowMatchesRow(windowTitle: $0.title, rowTitle: wanted) }
+        if byRowTitle.count == 1 {
+            return byRowTitle[0]
+        }
+        let target = ChatTextNormalizer.normalize(RoomTitle.expectedWindowTitle(forRowTitle: wanted))
+        guard !target.isEmpty else { return nil }
+        let normalizedMatches = windows.filter { ChatTextNormalizer.normalize($0.title ?? "") == target }
+        return normalizedMatches.count == 1 ? normalizedMatches[0] : nil
+    }
+
+    static func trimmed(_ text: String?) -> String {
+        (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Best partial title match among open chat windows.
+    func existingWindow(query: String) -> UIElement? {
+        chatWindows()
+            .compactMap { window -> (window: UIElement, score: Int)? in
+                guard let title = window.title else { return nil }
+                let score = ChatQueryMatcher.score(query: query, candidate: title)
+                return score > 0 ? (window, score) : nil
+            }
+            .max { $0.score < $1.score }?
+            .window
+    }
+
+    func mainWindow() -> UIElement? {
+        let windows = kakao.windows
+        if let main = windows.first(where: { $0.identifier == Self.mainWindowIdentifier }) {
+            return main
+        }
+        // Other KakaoTalk builds: a window without a transcript that carries the chat list.
+        return windows.first { window in
+            guard !hasTranscript(window) else { return false }
+            if window.title == "카카오톡" {
+                return true
+            }
+            return !window.findAll(where: { $0.identifier == "chatrooms" }, limit: 1, maxNodes: 160).isEmpty
+        }
+    }
+
+    /// Returns the main window, reopening it once (`open KakaoTalk.app`, as the legacy
+    /// recovery did) when the app runs without one.
+    enum MainWindowAction: String {
+        case openedViaMenuItem = "opened_via_menu_item"
+        case openedViaOpenCommand = "opened_via_open_command"
+    }
+
+    /// Returns the main window. A closed one is brought back by pressing KakaoTalk's
+    /// "카카오톡 열기" menu item (`showFirstWindow:`); `open KakaoTalk.app`, which activates
+    /// KakaoTalk, is only used as a last resort when `allowOpenCommand` (--deep-recovery).
+    func requireMainWindow(allowOpenCommand: Bool) throws -> (window: UIElement, action: MainWindowAction?) {
+        if let main = mainWindow() {
+            return (main, nil)
+        }
+        let pressed = pressShowMainWindowMenuItem()
+        if pressed, let main = waitForMainWindow(timeout: 3.0) {
+            return (main, .openedViaMenuItem)
+        }
+        guard allowOpenCommand else {
+            throw ReadFailure(
+                code: "WINDOW_NOT_READY",
+                message: pressed
+                    ? "[WINDOW_NOT_READY] KakaoTalk's main window did not appear after pressing \(MainWindowMenuItem.title)."
+                    : "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) is not open and the \(MainWindowMenuItem.title) menu item was unavailable.",
+                hint: "Open KakaoTalk's main window on the 채팅 tab and retry, or pass --deep-recovery to reopen it with open KakaoTalk.app (activates KakaoTalk)."
+            )
+        }
+
+        runner.log("read: main window still missing; reopening it via open KakaoTalk.app")
+        _ = KakaoTalkApp.forceOpen(timeout: 1.0)
+        if let main = waitForMainWindow(timeout: 3.0) {
+            return (main, .openedViaOpenCommand)
+        }
+        throw ReadFailure(
+            code: "WINDOW_NOT_READY",
+            message: "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) did not appear.",
+            hint: "Open KakaoTalk's main window on the 채팅 tab and retry."
+        )
+    }
+
+    /// Presses KakaoTalk's menu item "카카오톡 열기" (identifier `showFirstWindow:`) and nothing
+    /// else. The item is looked up below the application element (its menu-extra and menu bar,
+    /// not inside windows) and re-verified right before the AXPress.
+    @discardableResult
+    func pressShowMainWindowMenuItem() -> Bool {
+        let application = kakao.applicationElement.axElement
+        var roots: [AXUIElement] = []
+        if let extras = AXNodeReader.elementAttribute(application, kAXExtrasMenuBarAttribute) {
+            roots.append(extras)
+        }
+        roots += AXNodeReader.children(application).filter { AXNodeReader.read($0).snapshot.role != AXRoleName.window }
+
+        for root in roots {
+            guard let item = AXNodeReader.firstDescendant(of: root, maxNodes: 400, where: {
+                MainWindowMenuItem.isShowMainWindowItem($0.snapshot)
+            }) else {
+                continue
+            }
+            AXNodeReader.setMessagingTimeout(item.element, seconds: 2.0)
+            guard MainWindowMenuItem.isShowMainWindowItem(AXNodeReader.read(item.element).snapshot) else {
+                continue
+            }
+            let status = AXNodeReader.perform(item.element, kAXPressAction)
+            runner.log("read: pressed \(MainWindowMenuItem.title) (\(MainWindowMenuItem.identifier)) status=\(status.rawValue)")
+            return status == .success || status == .cannotComplete
+        }
+        runner.log("read: \(MainWindowMenuItem.title) menu item unavailable")
+        return false
+    }
+
+    /// Waits for the window identified "Main Window".
+    func waitForMainWindow(timeout: TimeInterval) -> UIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let main = kakao.windows.first(where: { $0.identifier == Self.mainWindowIdentifier }) {
+                return main
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline && !ReadInterruption.requested
+        return nil
+    }
+
+    func hasTranscript(_ window: UIElement) -> Bool {
+        AXNodeReader.children(window.axElement).contains { child in
+            let node = AXNodeReader.read(child).snapshot
+            return node.role == AXRoleName.scrollArea && node.identifier == Self.transcriptScrollAreaIdentifier
+        }
+    }
+
+    // MARK: Chat list
+
+    func access(in window: UIElement) -> ChatListAccess? {
+        guard let table = AXNodeReader.firstDescendant(of: window.axElement, maxNodes: 300, where: {
+            $0.snapshot.role == AXRoleName.table
+        }) else {
+            return nil
+        }
+        let parent = AXNodeReader.elementAttribute(table.element, kAXParentAttribute)
+        let scrollArea = parent.flatMap { element in
+            AXNodeReader.read(element).snapshot.role == AXRoleName.scrollArea ? element : nil
+        }
+        return ChatListAccess(window: window, table: table.element, scrollArea: scrollArea)
+    }
+
+    /// The row's `_NS:40` title, read with three batched calls; falls back to a full row read.
+    func title(of row: AXUIElement) -> String? {
+        for cell in AXNodeReader.read(row).children.prefix(2) {
+            for child in AXNodeReader.read(cell, depth: 1).children {
+                let node = AXNodeReader.read(child, depth: 2).snapshot
+                if node.identifier == ChatRowAnalyzer.titleIdentifier {
+                    let title = node.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return title.isEmpty ? nil : title
+                }
+            }
+        }
+        return ChatListScanner.summarize(row: row).title
+    }
+
+    func located(_ index: Int, title: String, rows: [AXUIElement]) -> LocatedChatRow {
+        LocatedChatRow(index: index, element: rows[index], title: title, summary: ChatListScanner.summarize(row: rows[index]))
+    }
+
+    /// Resolves a registry chat_id to its row.
+    ///
+    /// Fast path (the name is unique in the registry): rows are checked for the exact registered
+    /// title starting at the registry's last-seen index, and the first one whose preview still
+    /// matches the registered preview (or that has none registered) is taken without reading
+    /// the rest of the list. A changed preview keeps scanning titles, so a newer room with the
+    /// same name is not mistaken for the registered one. Otherwise every row with the same
+    /// normalized name is collected and the registry's preview/position matching decides.
+    func locate(chatID: String, record: ChatIdentityRecord, in access: ChatListAccess) throws -> LocatedChatRow {
+        let registry = ChatIdentityRegistryStore.shared
+        let rows = AXNodeReader.rows(of: access.table)
+        let exactName = Self.trimmed(record.displayName)
+        let target = record.normalizedName
+        let sameNameCount = registry.records(withNormalizedName: target).count
+        runner.log("read: chat list rows=\(rows.count) same-name registry records=\(sameNameCount)")
+
+        var titleCache: [Int: String?] = [:]
+        func titleAt(_ index: Int) -> String? {
+            if let cached = titleCache[index] {
+                return cached
+            }
+            let title = title(of: rows[index])
+            titleCache[index] = title
+            return title
+        }
+
+        if sameNameCount <= 1 {
+            var order: [Int] = []
+            if let hint = record.lastSeenIndex {
+                order = [hint, hint - 1, hint + 1, hint - 2, hint + 2].filter { rows.indices.contains($0) }
+            }
+            let hinted = Set(order)
+            order += rows.indices.filter { !hinted.contains($0) }
+
+            var exactRows: [LocatedChatRow] = []
+            for (scanned, index) in order.enumerated() {
+                try ReadInterruption.check("while scanning the chat list")
+                guard titleAt(index) == exactName else { continue }
+                let row = located(index, title: exactName, rows: rows)
+                if previewMatches(row, record: record) {
+                    runner.log("read: chat_id matched row \(index) after \(scanned + 1) title reads (hint \(record.lastSeenIndex.map(String.init) ?? "none"))")
+                    return refreshRegistry(row, chatID: chatID)
+                }
+                exactRows.append(row)
+            }
+            if exactRows.count == 1 {
+                runner.log("read: chat_id matched the only row titled exactly '\(exactName)' (preview changed)")
+                return refreshRegistry(exactRows[0], chatID: chatID)
+            }
+        }
+
+        var candidates: [LocatedChatRow] = []
+        for index in rows.indices {
+            try ReadInterruption.check("while scanning the chat list")
+            guard let title = titleAt(index), ChatTextNormalizer.normalize(title) == target else { continue }
+            candidates.append(located(index, title: title, rows: rows))
+        }
+        guard !candidates.isEmpty else {
+            throw notInList(record.displayName, rowCount: rows.count)
+        }
+        if candidates.count == 1, sameNameCount <= 1 {
+            return refreshRegistry(candidates[0], chatID: chatID)
+        }
+        let discoveries = candidates.map {
+            ChatListDiscovery(title: $0.title, lastMessage: $0.summary.preview, listIndex: $0.index, unread: $0.summary.unread)
+        }
+        let assigned = registry.assignChatIDs(for: discoveries)
+        guard let position = assigned.firstIndex(of: chatID) else {
+            throw notInList(record.displayName, rowCount: rows.count)
+        }
+        runner.log("read: chat_id matched duplicate-title row \(candidates[position].index)")
+        return candidates[position]
+    }
+
+    /// Scans titles for a name query and stops at the first row titled exactly `query`.
+    /// Without one, a single normalized match wins, several are ambiguous, then fuzzy matching.
+    func choose(query: String, in access: ChatListAccess) -> (choice: ChatQueryChoice, rows: [AXUIElement]) {
+        let rows = AXNodeReader.rows(of: access.table)
+        let wanted = Self.trimmed(query)
+        var titles: [(index: Int, title: String)] = []
+        for (index, row) in rows.enumerated() {
+            if ReadInterruption.requested {
+                break
+            }
+            guard let title = title(of: row) else { continue }
+            // The query may also be the window title of a "팀채팅, …" row.
+            if title == wanted || RoomTitle.windowMatchesRow(windowTitle: wanted, rowTitle: title) {
+                runner.log("read: exact title match at row \(index) after scanning \(index + 1) of \(rows.count) rows")
+                return (.match(index: index, title: title, exact: true), rows)
+            }
+            titles.append((index, title))
+        }
+        return (ChatQueryMatcher.choose(query: query, titles: titles), rows)
+    }
+
+    private func previewMatches(_ row: LocatedChatRow, record: ChatIdentityRecord) -> Bool {
+        guard let registered = record.lastPreviewNormalized, !registered.isEmpty else { return true }
+        return ChatTextNormalizer.normalize(row.summary.preview ?? "") == registered
+    }
+
+    private func refreshRegistry(_ row: LocatedChatRow, chatID: String) -> LocatedChatRow {
+        let discovery = ChatListDiscovery(title: row.title, lastMessage: row.summary.preview, listIndex: row.index, unread: row.summary.unread)
+        let assigned = ChatIdentityRegistryStore.shared.assignChatIDs(for: [discovery])
+        if assigned.first != chatID {
+            runner.log("read: registry assigned '\(assigned.first ?? "")' to the matched row (expected \(chatID))")
+        }
+        return row
+    }
+
+    private func notInList(_ name: String, rowCount: Int) -> ReadFailure {
+        ReadFailure(
+            code: "CHAT_NOT_IN_LIST",
+            message: "No chat-list row is titled '\(name)' (\(rowCount) rows checked).",
+            hint: "Run 'kktcli chats' to refresh chat_ids, or check that the chat list (채팅 tab) is showing."
+        )
+    }
+}

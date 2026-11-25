@@ -4,7 +4,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "kmsg",
+    name: "kktcli",
     platforms: [
         .macOS(.v13)
     ],
@@ -22,14 +22,14 @@ let package = Package(
                 "VersionGenTool",
             ]
         ),
-        // Pure parsing and policy logic (no Accessibility calls), unit tested by KmsgCoreTests.
+        // Pure parsing and policy logic (no Accessibility calls), unit tested by KktcliCoreTests.
         .target(
-            name: "KmsgCore"
+            name: "KktcliCore"
         ),
         .executableTarget(
-            name: "kmsg",
+            name: "kktcli",
             dependencies: [
-                "KmsgCore",
+                "KktcliCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             plugins: [
@@ -39,9 +39,9 @@ let package = Package(
         // Lives next to the Python contract tests; the explicit path keeps it case-correct on
         // case-sensitive file systems.
         .testTarget(
-            name: "KmsgCoreTests",
-            dependencies: ["KmsgCore"],
-            path: "tests/KmsgCoreTests"
+            name: "KktcliCoreTests",
+            dependencies: ["KktcliCore"],
+            path: "tests/KktcliCoreTests"
         ),
     ]
 )

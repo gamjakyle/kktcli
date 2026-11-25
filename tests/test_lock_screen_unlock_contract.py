@@ -3,8 +3,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-AUTHENTICATOR = REPO_ROOT / "Sources" / "kmsg" / "Auth" / "KakaoTalkAuthenticator.swift"
-CREDENTIAL_STORE = REPO_ROOT / "Sources" / "kmsg" / "Auth" / "CredentialStore.swift"
+AUTHENTICATOR = REPO_ROOT / "Sources" / "kktcli" / "Auth" / "KakaoTalkAuthenticator.swift"
+CREDENTIAL_STORE = REPO_ROOT / "Sources" / "kktcli" / "Auth" / "CredentialStore.swift"
 
 
 def section(source: str, start: str, end: str) -> str:
@@ -143,7 +143,7 @@ class LockScreenUnlockContractTests(unittest.TestCase):
         )
 
         # Writing a fresh document here would drop the stored lock passcode on every
-        # `kmsg auth login`.
+        # `kktcli auth login`.
         self.assertIn("try updateDocument { document in", save)
         self.assertNotIn("StoredCredentialsDocument(", save)
 

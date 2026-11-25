@@ -3,16 +3,16 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-KMSG_ENTRYPOINT = REPO_ROOT / "Sources" / "kmsg" / "kmsg.swift"
-WATCH_COMMAND = REPO_ROOT / "Sources" / "kmsg" / "Commands" / "WatchCommand.swift"
-TRANSCRIPT_READER = REPO_ROOT / "Sources" / "kmsg" / "KakaoTalk" / "TranscriptReader.swift"
-MESSAGE_CONTEXT_RESOLVER = REPO_ROOT / "Sources" / "kmsg" / "KakaoTalk" / "MessageContextResolver.swift"
-AX_PATH_CACHE = REPO_ROOT / "Sources" / "kmsg" / "Accessibility" / "AXPathCache.swift"
+ENTRYPOINT = REPO_ROOT / "Sources" / "kktcli" / "kktcli.swift"
+WATCH_COMMAND = REPO_ROOT / "Sources" / "kktcli" / "Commands" / "WatchCommand.swift"
+TRANSCRIPT_READER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "TranscriptReader.swift"
+MESSAGE_CONTEXT_RESOLVER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "MessageContextResolver.swift"
+AX_PATH_CACHE = REPO_ROOT / "Sources" / "kktcli" / "Accessibility" / "AXPathCache.swift"
 
 
 class WatchCommandContractTests(unittest.TestCase):
     def test_watch_command_is_registered(self) -> None:
-        source = KMSG_ENTRYPOINT.read_text(encoding="utf-8")
+        source = ENTRYPOINT.read_text(encoding="utf-8")
         self.assertIn("WatchCommand.self", source)
 
     def test_watch_command_defines_expected_flags(self) -> None:

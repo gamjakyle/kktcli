@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SEND_COMMAND = REPO_ROOT / "Sources" / "kmsg" / "Commands" / "SendCommand.swift"
+SEND_COMMAND = REPO_ROOT / "Sources" / "kktcli" / "Commands" / "SendCommand.swift"
 
 
 class SendCommandContractTests(unittest.TestCase):

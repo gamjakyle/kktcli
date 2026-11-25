@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MCP_SERVER_COMMAND = REPO_ROOT / "Sources" / "kmsg" / "Commands" / "MCPServerCommand.swift"
+MCP_SERVER_COMMAND = REPO_ROOT / "Sources" / "kktcli" / "Commands" / "MCPServerCommand.swift"
 
 
 class MCPServerContractTests(unittest.TestCase):
