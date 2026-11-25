@@ -1,5 +1,6 @@
 import ApplicationServices.HIServices
 import Foundation
+import KmsgCore
 
 enum ChatWindowLayoutMode: String {
     case preserve
@@ -192,7 +193,7 @@ struct ChatWindowResolver {
     func closeWindowViaCloseButton(_ window: UIElement, expectedTitle: String?) -> WindowCloseOutcome {
         if let expectedTitle {
             let currentTitle = window.title ?? ""
-            guard ChatTextNormalizer.normalize(currentTitle) == ChatTextNormalizer.normalize(expectedTitle) else {
+            guard currentTitle.trimmingCharacters(in: .whitespacesAndNewlines) == expectedTitle.trimmingCharacters(in: .whitespacesAndNewlines) else {
                 runner.log("close window: title '\(currentTitle)' does not match '\(expectedTitle)'; leaving it open")
                 return .titleMismatch(currentTitle)
             }
@@ -1140,95 +1141,9 @@ struct ChatWindowResolver {
         return deduplicateStringsPreservingOrder(texts)
     }
 
+    /// Scoring rules live in KmsgCore (`ChatQueryMatcher`, unit tested); unchanged behaviour.
     private func scoreQueryMatch(query: String, candidateText: String) -> Int {
-        let queryNormalized = normalizeSearchToken(query)
-        let candidateNormalized = normalizeSearchToken(candidateText)
-        guard !queryNormalized.isEmpty, !candidateNormalized.isEmpty else { return 0 }
-
-        if queryNormalized == candidateNormalized {
-            return 12_000
-        }
-        if candidateNormalized.hasPrefix(queryNormalized) {
-            return 10_500
-        }
-        if candidateNormalized.contains(queryNormalized) {
-            return 9_800
-        }
-        if queryNormalized.contains(candidateNormalized), candidateNormalized.count >= 2 {
-            return 8_800
-        }
-
-        let queryVariants = honorificVariants(of: queryNormalized)
-        let candidateVariants = honorificVariants(of: candidateNormalized)
-        var best = 0
-
-        for queryVariant in queryVariants where !queryVariant.isEmpty {
-            for candidateVariant in candidateVariants where !candidateVariant.isEmpty {
-                if queryVariant == candidateVariant {
-                    best = max(best, 8_700)
-                    continue
-                }
-                if candidateVariant.hasPrefix(queryVariant) {
-                    best = max(best, 8_400)
-                    continue
-                }
-                if candidateVariant.contains(queryVariant) {
-                    best = max(best, 8_200)
-                    continue
-                }
-                if queryVariant.contains(candidateVariant), candidateVariant.count >= 2 {
-                    best = max(best, 7_900)
-                }
-            }
-        }
-
-        if best > 0 {
-            return best
-        }
-
-        let minLength = min(queryNormalized.count, candidateNormalized.count)
-        if minLength >= 2 {
-            let shortest = queryNormalized.count <= candidateNormalized.count ? queryNormalized : candidateNormalized
-            let longest = queryNormalized.count > candidateNormalized.count ? queryNormalized : candidateNormalized
-            if longest.contains(shortest) {
-                return 6_600
-            }
-        }
-
-        return 0
-    }
-
-    private func normalizeSearchToken(_ text: String) -> String {
-        let lowered = text.folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current).lowercased()
-        var scalars = String.UnicodeScalarView()
-        scalars.reserveCapacity(lowered.unicodeScalars.count)
-
-        for scalar in lowered.unicodeScalars {
-            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
-                continue
-            }
-            if scalar.value == 0x200B || scalar.value == 0x200C || scalar.value == 0x200D || scalar.value == 0xFEFF {
-                continue
-            }
-            if CharacterSet.punctuationCharacters.contains(scalar) || CharacterSet.symbols.contains(scalar) {
-                continue
-            }
-            scalars.append(scalar)
-        }
-
-        return String(scalars)
-    }
-
-    private func honorificVariants(of text: String) -> [String] {
-        let suffixes = ["선생님", "님", "씨"]
-        var variants = Set<String>([text])
-        for suffix in suffixes where text.hasSuffix(suffix) {
-            let candidate = String(text.dropLast(suffix.count))
-            if !candidate.isEmpty {
-                variants.insert(candidate)
-            }
-        }
-        return Array(variants)
+        ChatQueryMatcher.score(query: query, candidate: candidateText)
     }
 
     private func deduplicateSearchCandidates(_ candidates: [SearchCandidate]) -> [SearchCandidate] {
