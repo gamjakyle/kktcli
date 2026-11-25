@@ -8,10 +8,17 @@ import KktcliCore
 /// cell, then AXPress on the single item identified as `openChatRoom:` / "채팅방 열기".
 /// No keyboard or mouse events are posted, so KakaoTalk may stay in the background.
 ///
-/// The row is re-verified (title unchanged, no unread badge) before scrolling, before the
-/// menu is shown and right before the press. Any other outcome cancels the menu (AXCancel);
-/// nothing else is ever pressed.
+/// The row is re-verified (title unchanged; with `skipUnread`, no unread badge) before
+/// scrolling, before the menu is shown and right before the press. Any other outcome cancels
+/// the menu (AXCancel); nothing else is ever pressed. Opening a room with unread messages
+/// sends read receipts, exactly as opening it by hand does.
 struct ChatRoomMenuOpener {
+    struct OpenedRoom {
+        let window: UIElement
+        /// The row's unread badge as read right before 채팅방 열기 was pressed.
+        let unreadBefore: UnreadBadge
+    }
+
     /// AX messaging timeout for AXShowMenu / AXPress / AXCancel (the process default is 0.25 s).
     private static let menuMessagingTimeout: Float = 2.0
     /// AX messaging timeout for reading menu elements while the menu is tracking.
@@ -21,14 +28,14 @@ struct ChatRoomMenuOpener {
     let kakao: KakaoTalkApp
     let runner: AXActionRunner
 
-    func open(_ row: LocatedChatRow, access: ChatListAccess, allowUnread: Bool) throws -> UIElement {
+    func open(_ row: LocatedChatRow, access: ChatListAccess, skipUnread: Bool) throws -> OpenedRoom {
         try ensureListIsShowing(access)
-        try verify(row, allowUnread: allowUnread, stage: "before scrolling the list")
+        try verify(row, skipUnread: skipUnread, stage: "before scrolling the list")
 
         let scrollState = try revealRow(row, access: access)
         defer { restoreListScroll(scrollState) }
 
-        try verify(row, allowUnread: allowUnread, stage: "before showing the context menu")
+        try verify(row, skipUnread: skipUnread, stage: "before showing the context menu")
 
         guard let cell = AXNodeReader.read(row.element).children.first else {
             throw ReadFailure(code: "MENU_UNAVAILABLE", message: "The chat-list row has no cell to show a context menu on.")
@@ -74,9 +81,10 @@ struct ChatRoomMenuOpener {
             throw ReadFailure(code: "MENU_ITEM_BLOCKED", message: "Refused to press menu item '\(item.snapshot.title ?? "")'.")
         }
 
+        let unreadBefore: UnreadBadge
         do {
             try ReadInterruption.check("before pressing \(MenuItemSafety.openChatRoomTitle)")
-            try verify(row, allowUnread: allowUnread, stage: "right before pressing \(MenuItemSafety.openChatRoomTitle)")
+            unreadBefore = try verify(row, skipUnread: skipUnread, stage: "right before pressing \(MenuItemSafety.openChatRoomTitle)")
         } catch {
             cancel(menu)
             throw error
@@ -88,7 +96,7 @@ struct ChatRoomMenuOpener {
 
         let opened = waitForChatWindow(title: row.title, windowsBefore: windowsBefore)
         if let window = opened.window {
-            return window
+            return OpenedRoom(window: window, unreadBefore: unreadBefore)
         }
 
         if menuIsOpen(on: cell) {
@@ -109,7 +117,9 @@ struct ChatRoomMenuOpener {
 
     // MARK: Verification
 
-    private func verify(_ row: LocatedChatRow, allowUnread: Bool, stage: String) throws {
+    /// Returns the row's current unread badge.
+    @discardableResult
+    private func verify(_ row: LocatedChatRow, skipUnread: Bool, stage: String) throws -> UnreadBadge {
         let summary = ChatListScanner.summarize(row: row.element)
         let currentTitle = ChatListLocator.trimmed(summary.title)
         // Exact comparison: rooms whose titles differ only in emoji or punctuation must not pass.
@@ -120,26 +130,27 @@ struct ChatRoomMenuOpener {
                 hint: "Retry; the list reorders when new messages arrive."
             )
         }
-        if summary.unread.isUnread, !allowUnread {
+        if summary.unread.isUnread, skipUnread {
             throw Self.unreadRefusal(title: row.title, badge: summary.unread)
         }
+        return summary.unread
     }
 
     static func unreadRefusal(title: String, badge: UnreadBadge) -> ReadFailure {
         if badge == .unknown(ChatRowAnalyzer.incompleteReadEvidence) {
             return ReadFailure(
                 code: "UNREAD_UNVERIFIED",
-                message: "'\(title)': the chat-list row could not be read completely, so an unread badge cannot be ruled out; opening it could send read receipts.",
-                hint: "Retry, or pass --allow-unread to open it anyway.",
+                message: "'\(title)': the chat-list row could not be read completely, so an unread badge cannot be ruled out; --skip-unread does not open such rooms.",
+                hint: "Retry, or run without --skip-unread (opening sends read receipts if there are unread messages).",
                 exitCode: ReadFailure.refusedExitCode
             )
         }
         return ReadFailure(
             code: "UNREAD_REFUSED",
-            message: "'\(title)' shows unread messages (\(badge.evidence ?? "badge")); opening it would send read receipts.",
-            hint: "Pass --allow-unread to open it anyway.",
+            message: "'\(title)' shows unread messages (\(badge.evidence ?? "badge")); --skip-unread does not open it because that would send read receipts.",
+            hint: "Run without --skip-unread to open it; that sends read receipts like opening it by hand.",
             exitCode: ReadFailure.refusedExitCode,
-            details: ["unread_badge": badge.evidence ?? ""]
+            details: ["unread_before": badge.evidence ?? ""]
         )
     }
 

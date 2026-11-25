@@ -309,6 +309,25 @@ struct ChatListLocator {
         return (ChatQueryMatcher.choose(query: query, titles: titles), rows)
     }
 
+    /// The unread badge the chat list shows now for the room `row` was located as, or nil when
+    /// that row cannot be identified again. Reads only: the same row element first, then the
+    /// rows at and next to its old index (the list shifts when other rooms get messages). A row
+    /// counts only with exactly the same title, and a neighbour only when it is the only one.
+    func currentUnreadBadge(of row: LocatedChatRow) -> UnreadBadge? {
+        let wanted = Self.trimmed(row.title)
+        let sameElement = ChatListScanner.summarize(row: row.element)
+        if Self.trimmed(sameElement.title) == wanted {
+            return sameElement.unread
+        }
+        guard let main = mainWindow(), let access = access(in: main) else { return nil }
+        let rows = AXNodeReader.rows(of: access.table)
+        let matches = [row.index, row.index - 1, row.index + 1, row.index - 2, row.index + 2]
+            .filter { rows.indices.contains($0) && title(of: rows[$0]) == wanted }
+        guard matches.count == 1 else { return nil }
+        let summary = ChatListScanner.summarize(row: rows[matches[0]])
+        return Self.trimmed(summary.title) == wanted ? summary.unread : nil
+    }
+
     private func previewMatches(_ row: LocatedChatRow, record: ChatIdentityRecord) -> Bool {
         guard let registered = record.lastPreviewNormalized, !registered.isEmpty else { return true }
         return ChatTextNormalizer.normalize(row.summary.preview ?? "") == registered

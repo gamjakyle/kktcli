@@ -15,11 +15,18 @@ struct ReadCommand: ParsableCommand {
 
             An already open chat window is read in place. Otherwise the chat is found in the chat
             list and opened through its context menu (채팅방 열기) with Accessibility actions only:
-            no keystrokes or clicks are posted, so KakaoTalk may stay in the background. A room
-            whose chat-list row shows an unread badge is not opened, because opening it sends
-            read receipts; pass --allow-unread to open it anyway (exit status 3 when refused).
+            no keystrokes or clicks are posted, so KakaoTalk may stay in the background.
             --legacy-open restores the old search/Enter based opening; it only posts input while
             KakaoTalk is the frontmost app.
+
+            A room whose chat-list row shows unread messages is opened like any other, exactly as
+            opening it by hand, which sends read receipts to the other participants. The JSON
+            meta reports the badge seen before opening (unread_before), the badge after the
+            window was closed (unread_after) and whether it disappeared (marked_read).
+            --skip-unread leaves such rooms unopened (UNREAD_REFUSED or UNREAD_UNVERIFIED, exit
+            status 3). Apart from the last-message preview in 'kktcli chats', there is no way to
+            see unread messages without marking them read. --allow-unread is deprecated and has
+            no effect.
 
             When fewer than --limit messages are loaded, older messages are loaded by scrolling
             the transcript to the top, bounded by --scrollback-timeout (on by default, off with
@@ -77,7 +84,13 @@ struct ReadCommand: ParsableCommand {
     @Flag(name: .long, help: "Output in JSON format")
     var json: Bool = false
 
-    @Flag(name: .long, help: "Open the chat even if its chat-list row shows unread messages (sends read receipts)")
+    @Flag(
+        name: .long,
+        help: "Do not open a chat whose chat-list row shows unread messages (UNREAD_REFUSED, exit status 3), so no read receipts are sent"
+    )
+    var skipUnread: Bool = false
+
+    @Flag(name: .long, help: "Deprecated, no effect: chats with unread messages are opened by default (see --skip-unread)")
     var allowUnread: Bool = false
 
     @Flag(
@@ -100,6 +113,13 @@ struct ReadCommand: ParsableCommand {
     /// Automatic (not explicitly requested) scrollback must leave time for the rest of the
     /// command: the MCP server kills `read` after 8 s, which would leave the window open.
     static let automaticWorkBudget: TimeInterval = 6.5
+    /// After reading, a room that showed an unread badge has its chat-list row read again;
+    /// while the badge is still shown it is re-read for up to this long, because KakaoTalk may
+    /// clear it a moment after the window closes.
+    static let unreadRecheckDuration: TimeInterval = 1.5
+    /// Without an explicit --scrollback that re-check ends this long after start, inside the
+    /// MCP server's 8 s limit.
+    static let automaticWorkDeadline: TimeInterval = 7.0
 
     @Flag(name: .long, help: "Include system messages (joins, notices)")
     var includeSystem: Bool = false
@@ -171,10 +191,14 @@ struct ReadCommand: ParsableCommand {
         let window: UIElement
         let method: OpenMethod
         let expectedTitle: String
-        let unreadBadge: UnreadBadge
+        /// The chat-list row's unread badge right before this command opened the room
+        /// (.none for a window that was already open).
+        let unreadBefore: UnreadBadge
         /// Chat-list row title when the room was opened from the list. It can differ from the
         /// window title ("팀채팅, X" opens a window titled "X").
         var rowTitle: String? = nil
+        /// The row the room was opened from, read again after reading for `unread_after`.
+        var listRow: LocatedChatRow? = nil
         var listRecovery: ChatListRecoveryReport? = nil
         var mainWindowAction: ChatListLocator.MainWindowAction? = nil
 
@@ -189,7 +213,9 @@ struct ReadCommand: ParsableCommand {
         let result: StructuredTranscriptResult
         let openedVia: OpenMethod
         let rowTitle: String?
-        let unreadBadge: UnreadBadge
+        let unreadBefore: UnreadBadge
+        let unreadAfter: UnreadBadge?
+        let markedRead: Bool?
         let windowState: String
         let windowDetail: String?
         let listRecovery: ChatListRecoveryReport?
@@ -225,6 +251,9 @@ struct ReadCommand: ParsableCommand {
         let startedAt = Date()
         if let problem = usageProblem() {
             throw ReadFailure(code: "INVALID_ARGUMENT", message: problem, exitCode: ExitCode.validationFailure.rawValue)
+        }
+        if allowUnread {
+            writeStderr("Note: --allow-unread is deprecated and has no effect; chats with unread messages are opened by default (--skip-unread leaves them unopened).\n")
         }
         let target = try resolveTarget()
 
@@ -319,13 +348,16 @@ struct ReadCommand: ParsableCommand {
             )
         }
 
+        let unreadAfter = recheckUnread(opened, locator: locator, startedAt: startedAt, runner: runner)
         return ReadOutcome(
             chat: chatTitle,
             fetchedAt: fetchedAt,
             result: result,
             openedVia: opened.method,
             rowTitle: opened.rowTitle,
-            unreadBadge: opened.unreadBadge,
+            unreadBefore: opened.unreadBefore,
+            unreadAfter: unreadAfter,
+            markedRead: UnreadReceipt.markedRead(before: opened.unreadBefore, after: unreadAfter),
             windowState: windowState,
             windowDetail: windowDetail,
             listRecovery: opened.listRecovery,
@@ -357,7 +389,7 @@ struct ReadCommand: ParsableCommand {
         func existing(_ window: UIElement) -> OpenedChat {
             runner.log("read: found existing chat window")
             resolver.applyLayoutIfRequested(window, label: "existing chat window")
-            return OpenedChat(window: window, method: .existingWindow, expectedTitle: window.title ?? target.exactTitle, unreadBadge: .none)
+            return OpenedChat(window: window, method: .existingWindow, expectedTitle: window.title ?? target.exactTitle, unreadBefore: .none)
         }
 
         // 1. An already open window with exactly this title: nothing is opened.
@@ -479,26 +511,28 @@ struct ReadCommand: ParsableCommand {
             }
         }
 
-        let window: UIElement
+        let openedRoom: ChatRoomMenuOpener.OpenedRoom
         do {
-            window = try ChatRoomMenuOpener(kakao: kakao, runner: runner).open(row, access: listAccess, allowUnread: allowUnread)
+            openedRoom = try ChatRoomMenuOpener(kakao: kakao, runner: runner).open(row, access: listAccess, skipUnread: skipUnread)
         } catch let failure as ReadFailure {
             throw withRecoveryDetails(failure)
         }
+        let window = openedRoom.window
         resolver.applyLayoutIfRequested(window, label: "opened chat window")
         return OpenedChat(
             window: window,
             method: .chatListMenu,
             expectedTitle: window.title ?? RoomTitle.expectedWindowTitle(forRowTitle: row.title),
-            unreadBadge: row.summary.unread,
+            unreadBefore: openedRoom.unreadBefore,
             rowTitle: row.title,
+            listRow: row,
             listRecovery: listRecovery,
             mainWindowAction: mainWindowAction
         )
     }
 
     private func openLegacy(_ target: ReadTarget, resolver: ChatWindowResolver, locator: ChatListLocator) throws -> OpenedChat {
-        let badge = try legacyUnreadPrecheck(target, locator: locator)
+        let listRow = try legacyUnreadPrecheck(target, locator: locator)
         let resolution: ChatWindowResolution
         do {
             switch target {
@@ -520,18 +554,20 @@ struct ReadCommand: ParsableCommand {
         case .openedViaSearch:
             method = .legacySearch
         }
+        let openedHere = method != .existingWindow
         return OpenedChat(
             window: resolution.window,
             method: method,
             expectedTitle: resolution.window.title ?? target.exactTitle,
-            unreadBadge: badge
+            unreadBefore: openedHere ? (listRow?.summary.unread ?? .none) : .none,
+            listRow: openedHere ? listRow : nil
         )
     }
 
-    /// The legacy path cannot re-check the row right before it opens the room, so the unread
-    /// state is read from the chat list first. When it cannot be established the open is
-    /// refused unless --allow-unread is given.
-    private func legacyUnreadPrecheck(_ target: ReadTarget, locator: ChatListLocator) throws -> UnreadBadge {
+    /// The legacy path cannot re-check the row right before it opens the room, so the row is
+    /// read from the chat list first: its badge is reported as `unread_before`, and with
+    /// --skip-unread a room with a badge, or one whose row is missing, is not opened.
+    private func legacyUnreadPrecheck(_ target: ReadTarget, locator: ChatListLocator) throws -> LocatedChatRow? {
         var row: LocatedChatRow?
         if let mainWindow = locator.mainWindow(), let access = locator.access(in: mainWindow) {
             switch target {
@@ -546,20 +582,55 @@ struct ReadCommand: ParsableCommand {
         }
 
         guard let row else {
-            if allowUnread {
-                return .none
+            guard skipUnread else {
+                return nil
             }
             throw ReadFailure(
                 code: "UNREAD_UNVERIFIED",
-                message: "'\(target.label)' is missing from the chat list, so its unread state cannot be checked before the legacy path opens it.",
-                hint: "Pass --allow-unread to open it anyway.",
+                message: "'\(target.label)' is missing from the chat list, so --skip-unread cannot check its unread state before the legacy path opens it.",
+                hint: "Run without --skip-unread to open it (that sends read receipts if there are unread messages).",
                 exitCode: ReadFailure.refusedExitCode
             )
         }
-        if row.summary.unread.isUnread, !allowUnread {
+        if row.summary.unread.isUnread, skipUnread {
             throw ChatRoomMenuOpener.unreadRefusal(title: row.title, badge: row.summary.unread)
         }
-        return row.summary.unread
+        return row
+    }
+
+    /// Reads the room's chat-list row again after the window was closed (with --keep-window,
+    /// after reading) and returns the unread badge it shows then. Done only when this command
+    /// opened the room and its row showed a badge (or could not be read completely) before;
+    /// while a badge is still shown the row is re-read until `unreadRecheckDuration` passes.
+    /// nil when not checked or when the row could not be identified again.
+    private func recheckUnread(_ opened: OpenedChat, locator: ChatListLocator, startedAt: Date, runner: AXActionRunner) -> UnreadBadge? {
+        guard opened.openedTransiently, opened.unreadBefore.isUnread, let row = opened.listRow,
+              !ReadInterruption.requested
+        else {
+            return nil
+        }
+        var deadline = Date().addingTimeInterval(Self.unreadRecheckDuration)
+        if !scrollback {
+            deadline = min(deadline, startedAt.addingTimeInterval(Self.automaticWorkDeadline))
+        }
+        var latest: UnreadBadge?
+        var checks = 0
+        while true {
+            checks += 1
+            if let badge = locator.currentUnreadBadge(of: row) {
+                latest = badge
+                if !badge.isUnread {
+                    break
+                }
+            }
+            if Date() >= deadline || ReadInterruption.requested {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.15)
+        }
+        let after = latest.map { $0.evidence ?? "none" } ?? "row not found"
+        runner.log("read: unread badge before='\(opened.unreadBefore.evidence ?? "none")' after='\(after)' (\(checks) check(s))")
+        return latest
     }
 
     /// Closes a window this command opened, via its AXCloseButton only.
@@ -638,7 +709,9 @@ struct ReadCommand: ParsableCommand {
         let listRecovery: ChatListRecoveryReport?
         let window: String
         let windowDetail: String?
-        let unreadBadge: String?
+        let unreadBefore: String?
+        let unreadAfter: String?
+        let markedRead: Bool?
         let rowsTotal: Int
         let rowsRead: Int
         let dateFromEarlierSeparator: Bool
@@ -652,7 +725,9 @@ struct ReadCommand: ParsableCommand {
             case listRecovery = "list_recovery"
             case window
             case windowDetail = "window_detail"
-            case unreadBadge = "unread_badge"
+            case unreadBefore = "unread_before"
+            case unreadAfter = "unread_after"
+            case markedRead = "marked_read"
             case rowsTotal = "rows_total"
             case rowsRead = "rows_read"
             case dateFromEarlierSeparator = "date_from_earlier_separator"
@@ -668,7 +743,9 @@ struct ReadCommand: ParsableCommand {
             try container.encode(listRecovery, forKey: .listRecovery)
             try container.encode(window, forKey: .window)
             try container.encode(windowDetail, forKey: .windowDetail)
-            try container.encode(unreadBadge, forKey: .unreadBadge)
+            try container.encode(unreadBefore, forKey: .unreadBefore)
+            try container.encode(unreadAfter, forKey: .unreadAfter)
+            try container.encode(markedRead, forKey: .markedRead)
             try container.encode(rowsTotal, forKey: .rowsTotal)
             try container.encode(rowsRead, forKey: .rowsRead)
             try container.encode(dateFromEarlierSeparator, forKey: .dateFromEarlierSeparator)
@@ -731,7 +808,9 @@ struct ReadCommand: ParsableCommand {
                     listRecovery: outcome.listRecovery,
                     window: outcome.windowState,
                     windowDetail: outcome.windowDetail,
-                    unreadBadge: outcome.unreadBadge.evidence,
+                    unreadBefore: UnreadReceipt.evidence(outcome.unreadBefore),
+                    unreadAfter: UnreadReceipt.evidence(outcome.unreadAfter),
+                    markedRead: outcome.markedRead,
                     rowsTotal: outcome.result.totalRows,
                     rowsRead: outcome.result.rowsRead,
                     dateFromEarlierSeparator: outcome.result.usedEarlierDateSeparator,
@@ -771,6 +850,9 @@ struct ReadCommand: ParsableCommand {
             print("")
         }
 
+        if let note = Self.unreadNote(before: outcome.unreadBefore, after: outcome.unreadAfter, markedRead: outcome.markedRead) {
+            writeStderr(note)
+        }
         if outcome.windowState == "left_open" {
             writeStderr("Note: the chat window was left open (\(outcome.windowDetail ?? "unknown reason")).\n")
         }
@@ -786,6 +868,24 @@ struct ReadCommand: ParsableCommand {
         if outcome.result.interrupted {
             writeStderr("Note: interrupted; the messages above are what had been read.\n")
         }
+    }
+
+    /// Text-mode note for a room that showed unread messages before it was opened.
+    private static func unreadNote(before: UnreadBadge, after: UnreadBadge?, markedRead: Bool?) -> String? {
+        guard let badge = UnreadReceipt.evidence(before) else { return nil }
+        if before == .unknown(ChatRowAnalyzer.incompleteReadEvidence) {
+            return "Note: the room's chat-list row could not be read completely before it was opened, so it may have had unread messages; opening sends read receipts for those like opening it by hand.\n"
+        }
+        let afterwards: String
+        switch markedRead {
+        case true?:
+            afterwards = "afterwards the chat-list badge was gone (marked read)"
+        case false?:
+            afterwards = "afterwards the chat-list badge was still shown (\(UnreadReceipt.evidence(after) ?? "badge"))"
+        case nil:
+            afterwards = "whether that cleared the chat-list badge could not be checked"
+        }
+        return "Note: the room's chat-list row showed unread messages (\(badge)) and was opened, which sends read receipts like opening it by hand; \(afterwards).\n"
     }
 
     // MARK: - Argument errors as JSON

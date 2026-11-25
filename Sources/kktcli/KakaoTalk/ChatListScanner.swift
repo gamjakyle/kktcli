@@ -60,8 +60,8 @@ struct ChatListEntry: Codable, Equatable {
     let title: String
     let chatID: String?
     let lastMessage: String?
-    /// True when the row shows an unread badge (or something that may be one).
-    /// `kktcli read` refuses to open such rooms unless `--allow-unread` is given.
+    /// True when the row shows an unread badge (or something that may be one). `kktcli read`
+    /// opens such rooms, which sends read receipts; `read --skip-unread` leaves them unopened.
     var hasUnread: Bool = false
     var unreadCount: Int?
 
