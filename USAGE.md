@@ -233,6 +233,17 @@ How a chat is opened:
    send read receipts. The command fails with `UNREAD_REFUSED` (exit status `3`)
    unless `--allow-unread` is given.
 
+When the row is missing because the chat list is still filtered by an earlier
+search (the search field is showing, or the list is suspiciously short), the
+full list is restored once by pressing only the **취소** button inside the
+search field and the top-bar **검색** toggle (for a hidden filter the toggle is
+pressed first to reveal the old query), and the list is scanned again. Nothing
+is typed and Enter is never sent. `meta.list_recovery` reports what was pressed.
+
+When KakaoTalk's main window is closed, it is reopened by pressing only the
+**카카오톡 열기** menu item (`showFirstWindow:`); `open KakaoTalk.app` is used
+only with `--deep-recovery`. `meta.main_window` reports it.
+
 `--legacy-open` keeps the previous search/Enter based path. Every keystroke and
 click is posted only after verifying that KakaoTalk is the frontmost app;
 otherwise the command stops with `NOT_FRONTMOST`.
