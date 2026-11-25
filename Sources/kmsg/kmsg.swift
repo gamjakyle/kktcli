@@ -32,7 +32,6 @@ struct Kmsg: ParsableCommand {
               \(commandName) watch "채팅방"
               \(commandName) watch "채팅방" --json
               \(commandName) mcp-server
-              \(commandName) update
 
             Tip:
               \(commandName) -v
@@ -49,7 +48,6 @@ struct Kmsg: ParsableCommand {
             WatchCommand.self,
             CacheCommand.self,
             MCPServerCommand.self,
-            UpdateCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )

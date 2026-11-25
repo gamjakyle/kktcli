@@ -82,7 +82,6 @@ struct StatusCommand: ParsableCommand {
           cache     Manage AX path cache
           inspect   Inspect KakaoTalk UI hierarchy (debug)
           mcp-server Run the stdio MCP server for integrations
-          update    Update kmsg to the latest Homebrew release
 
         OPTIONS:
           --help    Show help for any command
@@ -98,7 +97,6 @@ struct StatusCommand: ParsableCommand {
           kmsg send-image "친구이름" "/tmp/a.png" Send an image
           kmsg send --chat-id "<id>" "안녕!" Send a message by chat_id
           kmsg mcp-server                 Run local MCP server
-          kmsg update                     Update kmsg through Homebrew
         """)
     }
 }
