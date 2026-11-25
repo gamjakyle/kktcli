@@ -94,34 +94,84 @@ struct ChatListLocator {
 
     /// Returns the main window, reopening it once (`open KakaoTalk.app`, as the legacy
     /// recovery did) when the app runs without one.
-    /// Reopening runs `open KakaoTalk.app`, which activates KakaoTalk, so callers only allow it
-    /// when asked to (--deep-recovery).
-    func requireMainWindow(allowReopen: Bool) throws -> UIElement {
+    enum MainWindowAction: String {
+        case openedViaMenuItem = "opened_via_menu_item"
+        case openedViaOpenCommand = "opened_via_open_command"
+    }
+
+    /// Returns the main window. A closed one is brought back by pressing KakaoTalk's
+    /// "카카오톡 열기" menu item (`showFirstWindow:`); `open KakaoTalk.app`, which activates
+    /// KakaoTalk, is only used as a last resort when `allowOpenCommand` (--deep-recovery).
+    func requireMainWindow(allowOpenCommand: Bool) throws -> (window: UIElement, action: MainWindowAction?) {
         if let main = mainWindow() {
-            return main
+            return (main, nil)
         }
-        guard allowReopen else {
+        let pressed = pressShowMainWindowMenuItem()
+        if pressed, let main = waitForMainWindow(timeout: 3.0) {
+            return (main, .openedViaMenuItem)
+        }
+        guard allowOpenCommand else {
             throw ReadFailure(
                 code: "WINDOW_NOT_READY",
-                message: "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) is not open.",
-                hint: "Open KakaoTalk's main window on the 채팅 tab and retry, or pass --deep-recovery to reopen it (activates KakaoTalk)."
+                message: pressed
+                    ? "[WINDOW_NOT_READY] KakaoTalk's main window did not appear after pressing \(MainWindowMenuItem.title)."
+                    : "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) is not open and the \(MainWindowMenuItem.title) menu item was unavailable.",
+                hint: "Open KakaoTalk's main window on the 채팅 tab and retry, or pass --deep-recovery to reopen it with open KakaoTalk.app (activates KakaoTalk)."
             )
         }
 
-        runner.log("read: main window not exposed; reopening it via open KakaoTalk.app")
+        runner.log("read: main window still missing; reopening it via open KakaoTalk.app")
         _ = KakaoTalkApp.forceOpen(timeout: 1.0)
-        let deadline = Date().addingTimeInterval(3.0)
-        while Date() < deadline {
-            if let main = mainWindow() {
-                return main
-            }
-            Thread.sleep(forTimeInterval: 0.1)
+        if let main = waitForMainWindow(timeout: 3.0) {
+            return (main, .openedViaOpenCommand)
         }
         throw ReadFailure(
             code: "WINDOW_NOT_READY",
             message: "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) did not appear.",
             hint: "Open KakaoTalk's main window on the 채팅 tab and retry."
         )
+    }
+
+    /// Presses KakaoTalk's menu item "카카오톡 열기" (identifier `showFirstWindow:`) and nothing
+    /// else. The item is looked up below the application element (its menu-extra and menu bar,
+    /// not inside windows) and re-verified right before the AXPress.
+    @discardableResult
+    func pressShowMainWindowMenuItem() -> Bool {
+        let application = kakao.applicationElement.axElement
+        var roots: [AXUIElement] = []
+        if let extras = AXNodeReader.elementAttribute(application, kAXExtrasMenuBarAttribute) {
+            roots.append(extras)
+        }
+        roots += AXNodeReader.children(application).filter { AXNodeReader.read($0).snapshot.role != AXRoleName.window }
+
+        for root in roots {
+            guard let item = AXNodeReader.firstDescendant(of: root, maxNodes: 400, where: {
+                MainWindowMenuItem.isShowMainWindowItem($0.snapshot)
+            }) else {
+                continue
+            }
+            AXNodeReader.setMessagingTimeout(item.element, seconds: 2.0)
+            guard MainWindowMenuItem.isShowMainWindowItem(AXNodeReader.read(item.element).snapshot) else {
+                continue
+            }
+            let status = AXNodeReader.perform(item.element, kAXPressAction)
+            runner.log("read: pressed \(MainWindowMenuItem.title) (\(MainWindowMenuItem.identifier)) status=\(status.rawValue)")
+            return status == .success || status == .cannotComplete
+        }
+        runner.log("read: \(MainWindowMenuItem.title) menu item unavailable")
+        return false
+    }
+
+    /// Waits for the window identified "Main Window".
+    func waitForMainWindow(timeout: TimeInterval) -> UIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let main = kakao.windows.first(where: { $0.identifier == Self.mainWindowIdentifier }) {
+                return main
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline && !ReadInterruption.requested
+        return nil
     }
 
     func hasTranscript(_ window: UIElement) -> Bool {

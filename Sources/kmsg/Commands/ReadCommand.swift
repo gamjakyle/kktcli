@@ -175,6 +175,8 @@ struct ReadCommand: ParsableCommand {
         /// Chat-list row title when the room was opened from the list. It can differ from the
         /// window title ("팀채팅, X" opens a window titled "X").
         var rowTitle: String? = nil
+        var listRecovery: ChatListRecoveryReport? = nil
+        var mainWindowAction: ChatListLocator.MainWindowAction? = nil
 
         var openedTransiently: Bool {
             method != .existingWindow
@@ -190,6 +192,8 @@ struct ReadCommand: ParsableCommand {
         let unreadBadge: UnreadBadge
         let windowState: String
         let windowDetail: String?
+        let listRecovery: ChatListRecoveryReport?
+        let mainWindow: String?
     }
 
     private var scrollbackEnabled: Bool {
@@ -235,6 +239,20 @@ struct ReadCommand: ParsableCommand {
 
         let runner = AXActionRunner(traceEnabled: traceAX)
         let fetchedAt = Date()
+
+        // A closed main window is brought back with KakaoTalk's "카카오톡 열기" menu item before
+        // the login check runs; otherwise that check would reopen it with `open KakaoTalk.app`
+        // or activate KakaoTalk.
+        var mainWindowAction: ChatListLocator.MainWindowAction?
+        if !backgroundSafe, KakaoTalkApp.isRunning, let early = try? KakaoTalkApp(autoLaunch: false) {
+            let earlyLocator = ChatListLocator(kakao: early, runner: runner)
+            if earlyLocator.mainWindow() == nil, earlyLocator.pressShowMainWindowMenuItem(),
+               earlyLocator.waitForMainWindow(timeout: 3.0) != nil
+            {
+                mainWindowAction = .openedViaMenuItem
+            }
+        }
+
         let kakao: KakaoTalkApp
         do {
             kakao = backgroundSafe
@@ -255,7 +273,16 @@ struct ReadCommand: ParsableCommand {
         // From here on Ctrl-C / SIGTERM stops the bounded loops early instead of killing the
         // process, so a window opened below is still closed and a document is still printed.
         ReadInterruption.install()
-        let opened = try open(target, kakao: kakao, resolver: chatWindowResolver, locator: locator, runner: runner)
+        let opened: OpenedChat
+        do {
+            opened = try open(target, kakao: kakao, resolver: chatWindowResolver, locator: locator, runner: runner)
+        } catch let failure as ReadFailure {
+            if let mainWindowAction {
+                throw failure.adding(["main_window": mainWindowAction.rawValue])
+            }
+            throw failure
+        }
+        mainWindowAction = opened.mainWindowAction ?? mainWindowAction
         runner.log("read: chat window via \(opened.method.rawValue) title='\(opened.window.title ?? "")'")
 
         let chatTitle = opened.window.title ?? opened.expectedTitle
@@ -300,7 +327,9 @@ struct ReadCommand: ParsableCommand {
             rowTitle: opened.rowTitle,
             unreadBadge: opened.unreadBadge,
             windowState: windowState,
-            windowDetail: windowDetail
+            windowDetail: windowDetail,
+            listRecovery: opened.listRecovery,
+            mainWindow: mainWindowAction?.rawValue
         )
     }
 
@@ -358,21 +387,70 @@ struct ReadCommand: ParsableCommand {
         }
 
         // 2. The chat list, opened through the row's context menu.
-        let mainWindow = try locator.requireMainWindow(allowReopen: deepRecovery)
-        guard let access = locator.access(in: mainWindow) else {
-            throw ReadFailure(
+        let (mainWindow, mainWindowAction) = try locator.requireMainWindow(allowOpenCommand: deepRecovery)
+        var access = locator.access(in: mainWindow)
+        var listRecovery: ChatListRecoveryReport?
+
+        // Only when the wanted row is missing: a leftover search filter may hide it. Restores the
+        // full list at most once (취소 in the search field and the top-bar 검색 toggle only).
+        func recoverList(lastSeenIndex: Int?) -> Bool {
+            guard listRecovery == nil else { return false }
+            listRecovery = ChatListRecoverer(kakao: kakao, runner: runner).recover(
+                in: mainWindow,
+                table: access?.table,
+                registryRowCount: ChatIdentityRegistryStore.shared.knownRowCount(),
+                targetLastSeenIndex: lastSeenIndex
+            )
+            guard listRecovery?.restored == true else { return false }
+            access = locator.access(in: mainWindow)
+            return access != nil
+        }
+        func withRecoveryDetails(_ failure: ReadFailure) -> ReadFailure {
+            var extra: [String: String] = [:]
+            if let listRecovery { extra["list_recovery"] = listRecovery.summary }
+            if let mainWindowAction { extra["main_window"] = mainWindowAction.rawValue }
+            return failure.adding(extra)
+        }
+
+        var targetLastSeenIndex: Int?
+        if case .chatID(_, let record) = target {
+            targetLastSeenIndex = record.lastSeenIndex
+        }
+        if access == nil {
+            _ = recoverList(lastSeenIndex: targetLastSeenIndex)
+        }
+        guard var listAccess = access else {
+            throw withRecoveryDetails(ReadFailure(
                 code: "CHAT_LIST_UNAVAILABLE",
                 message: "KakaoTalk's main window shows no chat list table.",
                 hint: "Switch KakaoTalk's main window to the 채팅 tab and retry."
-            )
+            ))
         }
 
         let row: LocatedChatRow
         switch target {
         case .chatID(let chatID, let record):
-            row = try locator.locate(chatID: chatID, record: record, in: access)
+            do {
+                row = try locator.locate(chatID: chatID, record: record, in: listAccess)
+            } catch let failure as ReadFailure where failure.code == "CHAT_NOT_IN_LIST" {
+                guard recoverList(lastSeenIndex: record.lastSeenIndex), let recovered = access else {
+                    throw withRecoveryDetails(failure)
+                }
+                listAccess = recovered
+                do {
+                    row = try locator.locate(chatID: chatID, record: record, in: listAccess)
+                } catch let again as ReadFailure {
+                    throw withRecoveryDetails(again)
+                }
+            }
         case .name(let query):
-            let (choice, rows) = locator.choose(query: query, in: access)
+            var (choice, rows) = locator.choose(query: query, in: listAccess)
+            if case .none = choice, locator.existingWindow(query: query) == nil,
+               recoverList(lastSeenIndex: nil), let recovered = access
+            {
+                listAccess = recovered
+                (choice, rows) = locator.choose(query: query, in: listAccess)
+            }
             switch choice {
             case .match(let index, let title, let exact):
                 // Prefer an open window over opening a room for a partial match.
@@ -393,22 +471,29 @@ struct ReadCommand: ParsableCommand {
                 if let window = locator.existingWindow(query: query) {
                     return existing(window)
                 }
-                throw ReadFailure(
+                throw withRecoveryDetails(ReadFailure(
                     code: "CHAT_NOT_IN_LIST",
                     message: "No chat-list row matches '\(query)'.",
                     hint: "Check the name with 'kmsg chats'. --legacy-open searches instead (posts keystrokes; KakaoTalk must be frontmost)."
-                )
+                ))
             }
         }
 
-        let window = try ChatRoomMenuOpener(kakao: kakao, runner: runner).open(row, access: access, allowUnread: allowUnread)
+        let window: UIElement
+        do {
+            window = try ChatRoomMenuOpener(kakao: kakao, runner: runner).open(row, access: listAccess, allowUnread: allowUnread)
+        } catch let failure as ReadFailure {
+            throw withRecoveryDetails(failure)
+        }
         resolver.applyLayoutIfRequested(window, label: "opened chat window")
         return OpenedChat(
             window: window,
             method: .chatListMenu,
             expectedTitle: window.title ?? RoomTitle.expectedWindowTitle(forRowTitle: row.title),
             unreadBadge: row.summary.unread,
-            rowTitle: row.title
+            rowTitle: row.title,
+            listRecovery: listRecovery,
+            mainWindowAction: mainWindowAction
         )
     }
 
@@ -549,6 +634,8 @@ struct ReadCommand: ParsableCommand {
     private struct ReadMeta: Encodable {
         let openedVia: String
         let rowTitle: String?
+        let mainWindow: String?
+        let listRecovery: ChatListRecoveryReport?
         let window: String
         let windowDetail: String?
         let unreadBadge: String?
@@ -561,6 +648,8 @@ struct ReadCommand: ParsableCommand {
         enum CodingKeys: String, CodingKey {
             case openedVia = "opened_via"
             case rowTitle = "row_title"
+            case mainWindow = "main_window"
+            case listRecovery = "list_recovery"
             case window
             case windowDetail = "window_detail"
             case unreadBadge = "unread_badge"
@@ -575,6 +664,8 @@ struct ReadCommand: ParsableCommand {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(openedVia, forKey: .openedVia)
             try container.encode(rowTitle, forKey: .rowTitle)
+            try container.encode(mainWindow, forKey: .mainWindow)
+            try container.encode(listRecovery, forKey: .listRecovery)
             try container.encode(window, forKey: .window)
             try container.encode(windowDetail, forKey: .windowDetail)
             try container.encode(unreadBadge, forKey: .unreadBadge)
@@ -636,6 +727,8 @@ struct ReadCommand: ParsableCommand {
                 meta: ReadMeta(
                     openedVia: outcome.openedVia.rawValue,
                     rowTitle: outcome.rowTitle,
+                    mainWindow: outcome.mainWindow,
+                    listRecovery: outcome.listRecovery,
                     window: outcome.windowState,
                     windowDetail: outcome.windowDetail,
                     unreadBadge: outcome.unreadBadge.evidence,
@@ -680,6 +773,12 @@ struct ReadCommand: ParsableCommand {
 
         if outcome.windowState == "left_open" {
             writeStderr("Note: the chat window was left open (\(outcome.windowDetail ?? "unknown reason")).\n")
+        }
+        if let mainWindow = outcome.mainWindow {
+            writeStderr("Note: KakaoTalk's main window was closed and was reopened (\(mainWindow)).\n")
+        }
+        if let listRecovery = outcome.listRecovery {
+            writeStderr("Note: chat-list recovery: \(listRecovery.summary).\n")
         }
         if let scrollback = outcome.result.scrollback, scrollback.timedOut {
             writeStderr("Note: loading older messages stopped at the --scrollback-timeout budget.\n")

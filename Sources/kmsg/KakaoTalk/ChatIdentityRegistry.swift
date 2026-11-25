@@ -124,6 +124,11 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         loadDocument().records.filter { $0.normalizedName == normalizedName }
     }
 
+    /// Rows earlier chat-list scans have seen (highest last-seen index + 1), if any.
+    func knownRowCount() -> Int? {
+        loadDocument().records.compactMap(\.lastSeenIndex).max().map { $0 + 1 }
+    }
+
     private func updatedRecord(
         _ record: ChatIdentityRecord,
         with discovery: ChatListDiscovery,
