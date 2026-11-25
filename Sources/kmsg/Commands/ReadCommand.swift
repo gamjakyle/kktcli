@@ -172,6 +172,9 @@ struct ReadCommand: ParsableCommand {
         let method: OpenMethod
         let expectedTitle: String
         let unreadBadge: UnreadBadge
+        /// Chat-list row title when the room was opened from the list. It can differ from the
+        /// window title ("팀채팅, X" opens a window titled "X").
+        var rowTitle: String? = nil
 
         var openedTransiently: Bool {
             method != .existingWindow
@@ -183,6 +186,7 @@ struct ReadCommand: ParsableCommand {
         let fetchedAt: Date
         let result: StructuredTranscriptResult
         let openedVia: OpenMethod
+        let rowTitle: String?
         let unreadBadge: UnreadBadge
         let windowState: String
         let windowDetail: String?
@@ -293,6 +297,7 @@ struct ReadCommand: ParsableCommand {
             fetchedAt: fetchedAt,
             result: result,
             openedVia: opened.method,
+            rowTitle: opened.rowTitle,
             unreadBadge: opened.unreadBadge,
             windowState: windowState,
             windowDetail: windowDetail
@@ -398,7 +403,13 @@ struct ReadCommand: ParsableCommand {
 
         let window = try ChatRoomMenuOpener(kakao: kakao, runner: runner).open(row, access: access, allowUnread: allowUnread)
         resolver.applyLayoutIfRequested(window, label: "opened chat window")
-        return OpenedChat(window: window, method: .chatListMenu, expectedTitle: window.title ?? row.title, unreadBadge: row.summary.unread)
+        return OpenedChat(
+            window: window,
+            method: .chatListMenu,
+            expectedTitle: window.title ?? RoomTitle.expectedWindowTitle(forRowTitle: row.title),
+            unreadBadge: row.summary.unread,
+            rowTitle: row.title
+        )
     }
 
     private func openLegacy(_ target: ReadTarget, resolver: ChatWindowResolver, locator: ChatListLocator) throws -> OpenedChat {
@@ -485,7 +496,9 @@ struct ReadCommand: ParsableCommand {
         }
         if opened.method == .legacySearch, case .name(let query) = target {
             let resolvedTitle = opened.window.title ?? ""
-            if !resolvedTitle.isEmpty && !resolvedTitle.localizedCaseInsensitiveContains(query) {
+            if !resolvedTitle.isEmpty && !resolvedTitle.localizedCaseInsensitiveContains(query)
+                && !RoomTitle.windowMatchesRow(windowTitle: resolvedTitle, rowTitle: query)
+            {
                 runner.log("read: skipped auto-close because resolved title '\(resolvedTitle)' did not match query")
                 return ("left_open", "title_does_not_match_query")
             }
@@ -535,6 +548,7 @@ struct ReadCommand: ParsableCommand {
 
     private struct ReadMeta: Encodable {
         let openedVia: String
+        let rowTitle: String?
         let window: String
         let windowDetail: String?
         let unreadBadge: String?
@@ -546,6 +560,7 @@ struct ReadCommand: ParsableCommand {
 
         enum CodingKeys: String, CodingKey {
             case openedVia = "opened_via"
+            case rowTitle = "row_title"
             case window
             case windowDetail = "window_detail"
             case unreadBadge = "unread_badge"
@@ -559,6 +574,7 @@ struct ReadCommand: ParsableCommand {
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(openedVia, forKey: .openedVia)
+            try container.encode(rowTitle, forKey: .rowTitle)
             try container.encode(window, forKey: .window)
             try container.encode(windowDetail, forKey: .windowDetail)
             try container.encode(unreadBadge, forKey: .unreadBadge)
@@ -619,6 +635,7 @@ struct ReadCommand: ParsableCommand {
                 messages: items.map(ReadMessageJSON.init(item:)),
                 meta: ReadMeta(
                     openedVia: outcome.openedVia.rawValue,
+                    rowTitle: outcome.rowTitle,
                     window: outcome.windowState,
                     windowDetail: outcome.windowDetail,
                     unreadBadge: outcome.unreadBadge.evidence,

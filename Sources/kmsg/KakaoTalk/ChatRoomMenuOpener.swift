@@ -306,23 +306,25 @@ struct ChatRoomMenuOpener {
         windowsBefore: [AXUIElement],
         timeout: TimeInterval = 3.0
     ) -> (window: UIElement?, newWindowTitles: [String]) {
-        let wanted = ChatListLocator.trimmed(title)
-        let target = ChatTextNormalizer.normalize(title)
+        // Team chats ("팀채팅, …") and the self chat ("나와의 채팅, …") open a window titled
+        // without that room-type prefix, so compare against the expected window title.
+        let target = ChatTextNormalizer.normalize(RoomTitle.expectedWindowTitle(forRowTitle: title))
         let deadline = Date().addingTimeInterval(timeout)
         var newWindows: [UIElement] = []
 
         repeat {
             let windows = kakao.windows.filter { $0.identifier != ChatListLocator.mainWindowIdentifier }
-            if let match = windows.first(where: { ChatListLocator.trimmed($0.title) == wanted }) {
+            if let match = windows.first(where: { RoomTitle.windowMatchesRow(windowTitle: $0.title, rowTitle: title) }) {
                 return (match, [])
             }
             newWindows = windows.filter { window in
                 !windowsBefore.contains { CFEqual($0, window.axElement) }
             }
-            // A single window that appeared after the press and differs only in spacing or
-            // punctuation is the room that was just opened.
+            // A single window that appeared after the press is the room that was just opened when
+            // its title differs only by an unlisted room-type label, spacing or punctuation.
             if newWindows.count == 1, let window = newWindows.first,
-               ChatTextNormalizer.normalize(window.title ?? "") == target
+               RoomTitle.openedWindowMatchesRow(windowTitle: window.title, rowTitle: title)
+                || ChatTextNormalizer.normalize(window.title ?? "") == target
             {
                 runner.log("read: accepting new window '\(window.title ?? "")' for row title '\(title)'")
                 return (window, [])

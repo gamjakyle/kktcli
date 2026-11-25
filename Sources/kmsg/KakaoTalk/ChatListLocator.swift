@@ -50,7 +50,12 @@ struct ChatListLocator {
         if let exact = windows.first(where: { Self.trimmed($0.title) == wanted }) {
             return exact
         }
-        let target = ChatTextNormalizer.normalize(wanted)
+        // A team-chat / self-chat row title carries a room-type prefix its window title lacks.
+        let byRowTitle = windows.filter { RoomTitle.windowMatchesRow(windowTitle: $0.title, rowTitle: wanted) }
+        if byRowTitle.count == 1 {
+            return byRowTitle[0]
+        }
+        let target = ChatTextNormalizer.normalize(RoomTitle.expectedWindowTitle(forRowTitle: wanted))
         guard !target.isEmpty else { return nil }
         let normalizedMatches = windows.filter { ChatTextNormalizer.normalize($0.title ?? "") == target }
         return normalizedMatches.count == 1 ? normalizedMatches[0] : nil
@@ -244,7 +249,8 @@ struct ChatListLocator {
                 break
             }
             guard let title = title(of: row) else { continue }
-            if title == wanted {
+            // The query may also be the window title of a "팀채팅, …" row.
+            if title == wanted || RoomTitle.windowMatchesRow(windowTitle: wanted, rowTitle: title) {
                 runner.log("read: exact title match at row \(index) after scanning \(index + 1) of \(rows.count) rows")
                 return (.match(index: index, title: title, exact: true), rows)
             }
