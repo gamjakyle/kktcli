@@ -22,7 +22,7 @@ struct VersionGenTool {
         }
 
         guard isValidReleaseVersion(version) else {
-            throw ToolError.invalidVersion("VERSION must match MAJOR.YYMMDD.PATCH_COUNT (e.g. 1.260424.0)")
+            throw ToolError.invalidVersion("VERSION must be MAJOR.MINOR.PATCH without leading zeros (e.g. 0.1.0)")
         }
 
         let generated = """
@@ -41,43 +41,15 @@ struct VersionGenTool {
         try generated.write(to: outputURL, atomically: true, encoding: .utf8)
     }
 
+    /// Semantic version core: MAJOR.MINOR.PATCH, ASCII digits, no leading zeros.
     private static func isValidReleaseVersion(_ version: String) -> Bool {
         let parts = version.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3 else { return false }
 
-        let majorPart = String(parts[0])
-        let datePart = String(parts[1])
-        let patchCountPart = String(parts[2])
-
-        guard !majorPart.isEmpty,
-              datePart.count == 6,
-              !patchCountPart.isEmpty,
-              CharacterSet.decimalDigits.isSuperset(of: CharacterSet(charactersIn: majorPart)),
-              CharacterSet.decimalDigits.isSuperset(of: CharacterSet(charactersIn: datePart)),
-              CharacterSet.decimalDigits.isSuperset(of: CharacterSet(charactersIn: patchCountPart)),
-              let major = Int(majorPart),
-              let yearSuffix = Int(datePart.prefix(2)),
-              let month = Int(datePart.dropFirst(2).prefix(2)),
-              let day = Int(datePart.suffix(2)),
-              let patchCount = Int(patchCountPart),
-              major >= 1,
-              patchCount >= 0
-        else {
-            return false
+        return parts.allSatisfy { part in
+            guard !part.isEmpty, part.allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
+            return part == "0" || part.first != "0"
         }
-
-        var components = DateComponents()
-        components.calendar = Calendar(identifier: .gregorian)
-        components.year = 2000 + yearSuffix
-        components.month = month
-        components.day = day
-
-        guard let date = components.date else {
-            return false
-        }
-
-        let resolved = components.calendar?.dateComponents([.year, .month, .day], from: date)
-        return resolved?.year == 2000 + yearSuffix && resolved?.month == month && resolved?.day == day
     }
 
     private static func escapeForSwiftLiteral(_ value: String) -> String {

@@ -1,6 +1,19 @@
 import ArgumentParser
 import Foundation
 
+/// kktcli is a fork of kmsg (https://github.com/channprj/kmsg, MIT); this is the kmsg release
+/// it started from.
+enum UpstreamVersion {
+    static let base = "kmsg 1.260921.0"
+}
+
+extension BuildVersion {
+    /// What `--version` and `-v` print, e.g. "0.1.0 (based on kmsg 1.260921.0)".
+    static var display: String {
+        "\(current) (based on \(UpstreamVersion.base))"
+    }
+}
+
 private func invokedCommandName() -> String {
     let executable = CommandLine.arguments.first ?? "kktcli"
     let name = URL(fileURLWithPath: executable).lastPathComponent
@@ -36,7 +49,7 @@ struct Kktcli: ParsableCommand {
             Tip:
               \(commandName) -v
             """,
-        version: BuildVersion.current,
+        version: BuildVersion.display,
         subcommands: [
             AuthCommand.self,
             StatusCommand.self,
@@ -55,7 +68,7 @@ struct Kktcli: ParsableCommand {
     static func main() {
         let arguments = Array(CommandLine.arguments.dropFirst())
         if arguments.count == 1, arguments[0] == "-v" {
-            print(BuildVersion.current)
+            print(BuildVersion.display)
             return
         }
         if ReadCommand.wantsJSONErrors(arguments) {
