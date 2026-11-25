@@ -41,10 +41,23 @@ struct ChatListLocator {
         }
     }
 
+    /// An open chat window titled exactly `title`; failing that, the only window whose
+    /// normalized title (no spaces, punctuation or symbols) matches.
     func existingWindow(exactTitle title: String) -> UIElement? {
-        let target = ChatTextNormalizer.normalize(title)
+        let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else { return nil }
+        let windows = chatWindows()
+        if let exact = windows.first(where: { Self.trimmed($0.title) == wanted }) {
+            return exact
+        }
+        let target = ChatTextNormalizer.normalize(wanted)
         guard !target.isEmpty else { return nil }
-        return chatWindows().first { ChatTextNormalizer.normalize($0.title ?? "") == target }
+        let normalizedMatches = windows.filter { ChatTextNormalizer.normalize($0.title ?? "") == target }
+        return normalizedMatches.count == 1 ? normalizedMatches[0] : nil
+    }
+
+    static func trimmed(_ text: String?) -> String {
+        (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Best partial title match among open chat windows.
@@ -76,6 +89,8 @@ struct ChatListLocator {
 
     /// Returns the main window, reopening it once (`open KakaoTalk.app`, as the legacy
     /// recovery did) when the app runs without one.
+    /// Reopening runs `open KakaoTalk.app`, which activates KakaoTalk, so callers only allow it
+    /// when asked to (--deep-recovery).
     func requireMainWindow(allowReopen: Bool) throws -> UIElement {
         if let main = mainWindow() {
             return main
@@ -84,7 +99,7 @@ struct ChatListLocator {
             throw ReadFailure(
                 code: "WINDOW_NOT_READY",
                 message: "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) is not open.",
-                hint: "Open KakaoTalk's main window on the 채팅 tab and retry."
+                hint: "Open KakaoTalk's main window on the 채팅 tab and retry, or pass --deep-recovery to reopen it (activates KakaoTalk)."
             )
         }
 
@@ -144,49 +159,68 @@ struct ChatListLocator {
         LocatedChatRow(index: index, element: rows[index], title: title, summary: ChatListScanner.summarize(row: rows[index]))
     }
 
-    /// Resolves a registry chat_id to its row. Unique names stop at the first matching title,
-    /// starting at the registry's last-seen index; duplicate names are disambiguated by the
-    /// registry's preview/index matching over every row with that title.
+    /// Resolves a registry chat_id to its row.
+    ///
+    /// Fast path (the name is unique in the registry): rows are checked for the exact registered
+    /// title starting at the registry's last-seen index, and the first one whose preview still
+    /// matches the registered preview (or that has none registered) is taken without reading
+    /// the rest of the list. A changed preview keeps scanning titles, so a newer room with the
+    /// same name is not mistaken for the registered one. Otherwise every row with the same
+    /// normalized name is collected and the registry's preview/position matching decides.
     func locate(chatID: String, record: ChatIdentityRecord, in access: ChatListAccess) throws -> LocatedChatRow {
         let registry = ChatIdentityRegistryStore.shared
         let rows = AXNodeReader.rows(of: access.table)
+        let exactName = Self.trimmed(record.displayName)
         let target = record.normalizedName
         let sameNameCount = registry.records(withNormalizedName: target).count
         runner.log("read: chat list rows=\(rows.count) same-name registry records=\(sameNameCount)")
 
-        func matchingTitle(_ index: Int) -> String? {
-            guard let title = title(of: rows[index]) else { return nil }
-            return ChatTextNormalizer.normalize(title) == target ? title : nil
+        var titleCache: [Int: String?] = [:]
+        func titleAt(_ index: Int) -> String? {
+            if let cached = titleCache[index] {
+                return cached
+            }
+            let title = title(of: rows[index])
+            titleCache[index] = title
+            return title
         }
 
         if sameNameCount <= 1 {
-            var probed = Set<Int>()
+            var order: [Int] = []
             if let hint = record.lastSeenIndex {
-                for index in [hint, hint - 1, hint + 1, hint - 2, hint + 2] where rows.indices.contains(index) {
-                    probed.insert(index)
-                    if let title = matchingTitle(index) {
-                        runner.log("read: chat_id matched at registry hint index \(index) (hint \(hint))")
-                        return refreshRegistry(located(index, title: title, rows: rows), chatID: chatID)
-                    }
-                }
+                order = [hint, hint - 1, hint + 1, hint - 2, hint + 2].filter { rows.indices.contains($0) }
             }
-            for index in rows.indices where !probed.contains(index) {
-                if let title = matchingTitle(index) {
-                    runner.log("read: chat_id matched at row \(index) after scanning \(index + 1) rows")
-                    return refreshRegistry(located(index, title: title, rows: rows), chatID: chatID)
+            let hinted = Set(order)
+            order += rows.indices.filter { !hinted.contains($0) }
+
+            var exactRows: [LocatedChatRow] = []
+            for (scanned, index) in order.enumerated() {
+                try ReadInterruption.check("while scanning the chat list")
+                guard titleAt(index) == exactName else { continue }
+                let row = located(index, title: exactName, rows: rows)
+                if previewMatches(row, record: record) {
+                    runner.log("read: chat_id matched row \(index) after \(scanned + 1) title reads (hint \(record.lastSeenIndex.map(String.init) ?? "none"))")
+                    return refreshRegistry(row, chatID: chatID)
                 }
+                exactRows.append(row)
             }
-            throw notInList(record.displayName, rowCount: rows.count)
+            if exactRows.count == 1 {
+                runner.log("read: chat_id matched the only row titled exactly '\(exactName)' (preview changed)")
+                return refreshRegistry(exactRows[0], chatID: chatID)
+            }
         }
 
         var candidates: [LocatedChatRow] = []
         for index in rows.indices {
-            if let title = matchingTitle(index) {
-                candidates.append(located(index, title: title, rows: rows))
-            }
+            try ReadInterruption.check("while scanning the chat list")
+            guard let title = titleAt(index), ChatTextNormalizer.normalize(title) == target else { continue }
+            candidates.append(located(index, title: title, rows: rows))
         }
         guard !candidates.isEmpty else {
             throw notInList(record.displayName, rowCount: rows.count)
+        }
+        if candidates.count == 1, sameNameCount <= 1 {
+            return refreshRegistry(candidates[0], chatID: chatID)
         }
         let discoveries = candidates.map {
             ChatListDiscovery(title: $0.title, lastMessage: $0.summary.preview, listIndex: $0.index, unread: $0.summary.unread)
@@ -199,19 +233,29 @@ struct ChatListLocator {
         return candidates[position]
     }
 
-    /// Scans titles for a name query and stops at the first exact (normalized) match.
+    /// Scans titles for a name query and stops at the first row titled exactly `query`.
+    /// Without one, a single normalized match wins, several are ambiguous, then fuzzy matching.
     func choose(query: String, in access: ChatListAccess) -> (choice: ChatQueryChoice, rows: [AXUIElement]) {
         let rows = AXNodeReader.rows(of: access.table)
+        let wanted = Self.trimmed(query)
         var titles: [(index: Int, title: String)] = []
         for (index, row) in rows.enumerated() {
+            if ReadInterruption.requested {
+                break
+            }
             guard let title = title(of: row) else { continue }
-            if ChatQueryMatcher.score(query: query, candidate: title) == ChatQueryMatcher.exactScore {
+            if title == wanted {
                 runner.log("read: exact title match at row \(index) after scanning \(index + 1) of \(rows.count) rows")
                 return (.match(index: index, title: title, exact: true), rows)
             }
             titles.append((index, title))
         }
         return (ChatQueryMatcher.choose(query: query, titles: titles), rows)
+    }
+
+    private func previewMatches(_ row: LocatedChatRow, record: ChatIdentityRecord) -> Bool {
+        guard let registered = record.lastPreviewNormalized, !registered.isEmpty else { return true }
+        return ChatTextNormalizer.normalize(row.summary.preview ?? "") == registered
     }
 
     private func refreshRegistry(_ row: LocatedChatRow, chatID: String) -> LocatedChatRow {

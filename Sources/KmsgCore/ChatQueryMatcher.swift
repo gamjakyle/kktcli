@@ -96,16 +96,14 @@ public enum ChatQueryMatcher {
         return Array(variants)
     }
 
-    /// Picks the row to open for a name query: the first exact match wins; otherwise the single
-    /// best fuzzy match. Returns `.ambiguous` when several rows share the best fuzzy score.
+    /// Picks the row to open for a name query: a single normalized-exact match wins (several
+    /// are ambiguous); otherwise the single best fuzzy match. Returns `.ambiguous` when several
+    /// rows share the best score.
     public static func choose(query: String, titles: [(index: Int, title: String)]) -> ChatQueryChoice {
         var best: [(index: Int, title: String)] = []
         var bestScore = 0
         for entry in titles {
             let score = score(query: query, candidate: entry.title)
-            if score == exactScore {
-                return .match(index: entry.index, title: entry.title, exact: true)
-            }
             if score > bestScore {
                 bestScore = score
                 best = [entry]
@@ -114,7 +112,7 @@ public enum ChatQueryMatcher {
             }
         }
         if best.count == 1, let only = best.first {
-            return .match(index: only.index, title: only.title, exact: false)
+            return .match(index: only.index, title: only.title, exact: bestScore == exactScore)
         }
         if best.count > 1 {
             return .ambiguous(best.map(\.title))

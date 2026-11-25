@@ -92,8 +92,14 @@ struct ReadCommand: ParsableCommand {
     @Flag(name: .long, help: "Never scroll the transcript to load older messages")
     var noScrollback: Bool = false
 
-    @Option(name: .long, help: "Time budget in seconds for loading older messages")
+    @Option(name: .long, help: "Time budget in seconds for loading older messages (automatic scrollback also stops ~6.5 s after start)")
     var scrollbackTimeout: Double = 4
+
+    static let maximumLimit = 50_000
+    static let maximumScrollbackTimeout: Double = 600
+    /// Automatic (not explicitly requested) scrollback must leave time for the rest of the
+    /// command: the MCP server kills `read` after 8 s, which would leave the window open.
+    static let automaticWorkBudget: TimeInterval = 6.5
 
     @Flag(name: .long, help: "Include system messages (joins, notices)")
     var includeSystem: Bool = false
@@ -195,19 +201,20 @@ struct ReadCommand: ParsableCommand {
         } else if (chat ?? "").isEmpty {
             return "Chat name is required unless --chat-id is provided."
         }
-        if limit < 1 {
-            return "--limit must be at least 1."
+        if limit < 1 || limit > Self.maximumLimit {
+            return "--limit must be between 1 and \(Self.maximumLimit)."
         }
         if scrollback && noScrollback {
             return "--scrollback and --no-scrollback cannot be used together."
         }
-        if scrollbackTimeout < 0 {
-            return "--scrollback-timeout must not be negative."
+        if scrollbackTimeout < 0 || scrollbackTimeout > Self.maximumScrollbackTimeout {
+            return "--scrollback-timeout must be between 0 and \(Int(Self.maximumScrollbackTimeout)) seconds."
         }
         return nil
     }
 
     private func performRead() throws -> ReadOutcome {
+        let startedAt = Date()
         if let problem = usageProblem() {
             throw ReadFailure(code: "INVALID_ARGUMENT", message: problem, exitCode: ExitCode.validationFailure.rawValue)
         }
@@ -241,19 +248,29 @@ struct ReadCommand: ParsableCommand {
             interactionMode: backgroundSafe ? .backgroundSafe : .allowUIAutomation
         )
         let locator = ChatListLocator(kakao: kakao, runner: runner)
+        // From here on Ctrl-C / SIGTERM stops the bounded loops early instead of killing the
+        // process, so a window opened below is still closed and a document is still printed.
+        ReadInterruption.install()
         let opened = try open(target, kakao: kakao, resolver: chatWindowResolver, locator: locator, runner: runner)
         runner.log("read: chat window via \(opened.method.rawValue) title='\(opened.window.title ?? "")'")
 
         let chatTitle = opened.window.title ?? opened.expectedTitle
         var result: StructuredTranscriptResult?
-        if let parts = StructuredTranscriptReader.parts(in: opened.window) {
+        let parts = opened.openedTransiently
+            ? StructuredTranscriptReader.waitForParts(in: opened.window, timeout: 1.5)
+            : StructuredTranscriptReader.parts(in: opened.window)
+        if let parts {
+            var budget = scrollbackTimeout
+            if !scrollback {
+                budget = min(budget, max(0, Self.automaticWorkBudget - Date().timeIntervalSince(startedAt)))
+            }
             result = StructuredTranscriptReader(runner: runner).read(
                 parts,
                 options: TranscriptReadOptions(
                     limit: limit,
                     includeSystem: includeSystem,
                     scrollback: scrollbackEnabled,
-                    scrollbackTimeout: scrollbackTimeout
+                    scrollbackTimeout: budget
                 )
             )
         }
@@ -336,7 +353,7 @@ struct ReadCommand: ParsableCommand {
         }
 
         // 2. The chat list, opened through the row's context menu.
-        let mainWindow = try locator.requireMainWindow(allowReopen: true)
+        let mainWindow = try locator.requireMainWindow(allowReopen: deepRecovery)
         guard let access = locator.access(in: mainWindow) else {
             throw ReadFailure(
                 code: "CHAT_LIST_UNAVAILABLE",
@@ -525,6 +542,7 @@ struct ReadCommand: ParsableCommand {
         let rowsRead: Int
         let dateFromEarlierSeparator: Bool
         let scrollback: ScrollbackReport?
+        let interrupted: Bool
 
         enum CodingKeys: String, CodingKey {
             case openedVia = "opened_via"
@@ -535,6 +553,7 @@ struct ReadCommand: ParsableCommand {
             case rowsRead = "rows_read"
             case dateFromEarlierSeparator = "date_from_earlier_separator"
             case scrollback
+            case interrupted
         }
 
         func encode(to encoder: Encoder) throws {
@@ -547,6 +566,7 @@ struct ReadCommand: ParsableCommand {
             try container.encode(rowsRead, forKey: .rowsRead)
             try container.encode(dateFromEarlierSeparator, forKey: .dateFromEarlierSeparator)
             try container.encode(scrollback, forKey: .scrollback)
+            try container.encode(interrupted, forKey: .interrupted)
         }
     }
 
@@ -605,7 +625,8 @@ struct ReadCommand: ParsableCommand {
                     rowsTotal: outcome.result.totalRows,
                     rowsRead: outcome.result.rowsRead,
                     dateFromEarlierSeparator: outcome.result.usedEarlierDateSeparator,
-                    scrollback: outcome.result.scrollback
+                    scrollback: outcome.result.scrollback,
+                    interrupted: outcome.result.interrupted
                 )
             )
             let data = try Self.makeEncoder().encode(payload)
@@ -645,6 +666,31 @@ struct ReadCommand: ParsableCommand {
         }
         if let scrollback = outcome.result.scrollback, scrollback.timedOut {
             writeStderr("Note: loading older messages stopped at the --scrollback-timeout budget.\n")
+        }
+        if outcome.result.interrupted {
+            writeStderr("Note: interrupted; the messages above are what had been read.\n")
+        }
+    }
+
+    // MARK: - Argument errors as JSON
+
+    /// `kmsg read ... --json` promises one JSON document on stdout even when the arguments
+    /// themselves do not parse (see `Kmsg.main`).
+    static func wantsJSONErrors(_ arguments: [String]) -> Bool {
+        arguments.first == "read" && arguments.contains("--json")
+    }
+
+    static func printArgumentErrorJSON(_ message: String) {
+        let payload = ReadErrorJSON(
+            code: "INVALID_ARGUMENT",
+            message: message.trimmingCharacters(in: .whitespacesAndNewlines),
+            hint: "Run 'kmsg read --help'.",
+            chat: nil,
+            chatID: nil
+        )
+        if let data = try? makeEncoder().encode(payload) {
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data([0x0A]))
         }
     }
 

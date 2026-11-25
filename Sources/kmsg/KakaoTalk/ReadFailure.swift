@@ -49,3 +49,28 @@ func withStdoutRedirectedToStderr<T>(_ enabled: Bool, _ body: () throws -> T) re
     }
     return try body()
 }
+
+nonisolated(unsafe) private var readInterruptedFlag: sig_atomic_t = 0
+
+/// SIGINT/SIGTERM during `read` (Ctrl-C, or the MCP server's timeout) stop the bounded loops
+/// early so the command can still close the window it opened and print its document.
+enum ReadInterruption {
+    static func install() {
+        readInterruptedFlag = 0
+        signal(SIGINT) { _ in
+            readInterruptedFlag = 1
+        }
+        signal(SIGTERM) { _ in
+            readInterruptedFlag = 1
+        }
+    }
+
+    static var requested: Bool {
+        readInterruptedFlag != 0
+    }
+
+    static func check(_ stage: String) throws {
+        guard requested else { return }
+        throw ReadFailure(code: "INTERRUPTED", message: "Interrupted \(stage).", exitCode: 130)
+    }
+}

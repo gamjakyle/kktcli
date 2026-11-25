@@ -195,6 +195,40 @@ struct TranscriptParserTests {
         #expect(items[0].linkCount == 1)
     }
 
+    @Test("Text around a URL is kept; only a shortened URL token is expanded")
+    func linkExpansionKeepsText() {
+        let plain = Fixture.row([
+            Fixture.node("AXTextArea", value: "https://youtu.be/x 대박...", frame: CGRect(x: 226, y: 0, width: 140, height: 30)),
+            Fixture.node("AXLink", title: "https://youtu.be/x", depth: 3),
+        ])
+        #expect(messages([plain])[0].body == "https://youtu.be/x 대박...")
+
+        let mixed = Fixture.row([
+            Fixture.node("AXTextArea", value: "이거 보세요 https://example.com/a/lo... 재밌어요", frame: CGRect(x: 226, y: 0, width: 140, height: 30)),
+            Fixture.node("AXLink", title: "https://example.com/a/long", depth: 3),
+        ])
+        #expect(messages([mixed])[0].body == "이거 보세요 https://example.com/a/long 재밌어요")
+
+        // A link that only appears in a quoted reply/preview card is not used for expansion.
+        let quoted = Fixture.row([
+            Fixture.node("AXGroup", desc: "답장", frame: CGRect(x: 226, y: 0, width: 140, height: 20)),
+            Fixture.node("AXLink", title: "https://example.com/other", depth: 3),
+            Fixture.node("AXTextArea", value: "https://example.com/o...", frame: CGRect(x: 226, y: 22, width: 140, height: 30)),
+        ])
+        #expect(messages([quoted])[0].body == "https://example.com/o...")
+    }
+
+    @Test("A full-width row is unknown even when it carries a time label")
+    func fullWidthWithMeta() {
+        let banner = Fixture.row([
+            Fixture.node("AXGroup", desc: "채널 소식", frame: CGRect(x: 4, y: 0, width: 372, height: 120)),
+            Fixture.node("AXStaticText", value: "오후 3:00", frame: CGRect(x: 300, y: 122, width: 60, height: 14)),
+        ])
+        let items = TranscriptParser.parse([Fixture.otherFirst("홍길동", "안녕", meta: "오후 2:59"), banner], options: options)
+        #expect(items[1].side == .unknown)
+        #expect(items[1].author == nil)
+    }
+
     @Test("lastItems keeps the newest messages in chronological order")
     func selection() {
         let parsed = TranscriptParser.parse([

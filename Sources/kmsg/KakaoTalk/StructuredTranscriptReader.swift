@@ -51,6 +51,8 @@ struct StructuredTranscriptResult {
     let scrollback: ScrollbackReport?
     /// The first item's date came from a separator above the rows that were parsed.
     let usedEarlierDateSeparator: Bool
+    /// SIGINT/SIGTERM arrived; reading stopped early with what was already read.
+    let interrupted: Bool
 }
 
 /// Reads a chat window's transcript table row by row (batched AX reads) and parses it with
@@ -62,7 +64,7 @@ struct StructuredTranscriptReader {
     private static let rowFlattenBudget = 120
     private static let stallTimeout: TimeInterval = 1.2
     private static let dateProbeRowLimit = 5_000
-    private static let dateProbeTimeout: TimeInterval = 2.5
+    private static let dateProbeTimeout: TimeInterval = 1.5
 
     let runner: AXActionRunner
 
@@ -101,12 +103,40 @@ struct StructuredTranscriptReader {
                         best = (element, child, frame)
                     }
                 }
-                continue
             }
             queue.append(contentsOf: node.children)
         }
         guard let best else { return nil }
         return TranscriptAXParts(window: window.axElement, scrollArea: best.scrollArea, table: best.table, scrollFrame: best.frame)
+    }
+
+    /// A window that was just opened fills its transcript asynchronously: wait until the table
+    /// exists and its row count has held still briefly (an empty room times out with 0 rows).
+    static func waitForParts(in window: UIElement, timeout: TimeInterval) -> TranscriptAXParts? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var parts: TranscriptAXParts?
+        var lastCount = -1
+        var stableSince: Date?
+        while Date() < deadline, !ReadInterruption.requested {
+            if parts == nil {
+                parts = Self.parts(in: window)
+            }
+            if let parts {
+                let count = AXNodeReader.rowCount(of: parts.table)
+                if count > 0, count == lastCount {
+                    let since = stableSince ?? Date()
+                    stableSince = since
+                    if Date().timeIntervalSince(since) >= 0.25 {
+                        return parts
+                    }
+                } else {
+                    lastCount = count
+                    stableSince = nil
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.08)
+        }
+        return parts ?? Self.parts(in: window)
     }
 
     func read(_ parts: TranscriptAXParts, options: TranscriptReadOptions) -> StructuredTranscriptResult {
@@ -127,7 +157,7 @@ struct StructuredTranscriptReader {
                 if let original = AXNodeReader.doubleValue(scrollBar) {
                     scrollBarToRestore = (scrollBar, original)
                 }
-                while tail.selected.count < options.limit {
+                while tail.selected.count < options.limit, !ReadInterruption.requested {
                     if Date() >= deadline {
                         scrollReport.timedOut = true
                         break
@@ -191,7 +221,8 @@ struct StructuredTranscriptReader {
             totalRows: tail.totalRows,
             rowsRead: tail.rows.count,
             scrollback: report,
-            usedEarlierDateSeparator: usedEarlierSeparator
+            usedEarlierDateSeparator: usedEarlierSeparator,
+            interrupted: ReadInterruption.requested
         )
     }
 
@@ -218,7 +249,7 @@ struct StructuredTranscriptReader {
         var selected: [TranscriptItem] = []
         var chunk = max(40, options.limit * 2)
 
-        while start > 0 {
+        while start > 0, !ReadInterruption.requested {
             let newStart = max(0, start - chunk)
             let fresh = rowElements[newStart..<start].map { element in
                 TranscriptRow(nodes: AXNodeReader.flatten(element, maxDepth: Self.rowFlattenDepth, budget: Self.rowFlattenBudget))
@@ -250,7 +281,7 @@ struct StructuredTranscriptReader {
         let deadline = Date().addingTimeInterval(Self.dateProbeTimeout)
         var index = end - 1
         var scanned = 0
-        while index >= 0, scanned < Self.dateProbeRowLimit, Date() < deadline {
+        while index >= 0, scanned < Self.dateProbeRowLimit, Date() < deadline, !ReadInterruption.requested {
             if let cell = AXNodeReader.children(rows[index]).first,
                AXNodeReader.count(cell, kAXChildrenAttribute) == 1,
                let only = AXNodeReader.children(cell).first
@@ -284,7 +315,7 @@ struct StructuredTranscriptReader {
         var nudged = false
 
         while count < targetRowCount {
-            if Date() >= deadline {
+            if Date() >= deadline || ReadInterruption.requested {
                 return ScrollStep(rowsBefore: before, rowsAfter: count, stalled: false, timedOut: true)
             }
             if (AXNodeReader.doubleValue(scrollBar) ?? 1) > 0.0005 {
@@ -312,7 +343,7 @@ struct StructuredTranscriptReader {
     }
 
     private func waitForRowGrowth(_ table: AXUIElement, from count: Int, until deadline: Date) -> Int? {
-        while Date() < deadline {
+        while Date() < deadline, !ReadInterruption.requested {
             Thread.sleep(forTimeInterval: 0.08)
             let current = AXNodeReader.rowCount(of: table)
             guard current > count else { continue }

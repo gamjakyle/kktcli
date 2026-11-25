@@ -21,6 +21,9 @@ public struct AXNodeSnapshot: Equatable, Sendable {
     public var depth: Int
     public var childCount: Int
     public var selected: Bool?
+    /// The batched read of this node failed (or a flatten ran out of budget here), so the
+    /// node's real content is unknown.
+    public var readFailed: Bool
 
     public init(
         role: String,
@@ -33,7 +36,8 @@ public struct AXNodeSnapshot: Equatable, Sendable {
         frame: CGRect? = nil,
         depth: Int = 0,
         childCount: Int = 0,
-        selected: Bool? = nil
+        selected: Bool? = nil,
+        readFailed: Bool = false
     ) {
         self.role = role
         self.subrole = subrole
@@ -46,6 +50,7 @@ public struct AXNodeSnapshot: Equatable, Sendable {
         self.depth = depth
         self.childCount = childCount
         self.selected = selected
+        self.readFailed = readFailed
     }
 
     /// The node's text: its value when non-empty, otherwise its title, otherwise "".

@@ -33,6 +33,7 @@ struct ChatRoomMenuOpener {
         }
         AXNodeReader.setMessagingTimeout(cell, seconds: Self.menuMessagingTimeout)
 
+        try ReadInterruption.check("before showing the context menu")
         let windowsBefore = kakao.windows.map(\.axElement)
         let showStatus = AXNodeReader.perform(cell, "AXShowMenu")
         runner.log("read: AXShowMenu status=\(showStatus.rawValue)")
@@ -68,6 +69,7 @@ struct ChatRoomMenuOpener {
         }
 
         do {
+            try ReadInterruption.check("before pressing \(MenuItemSafety.openChatRoomTitle)")
             try verify(row, allowUnread: allowUnread, stage: "right before pressing \(MenuItemSafety.openChatRoomTitle)")
         } catch {
             cancel(menu)
@@ -78,17 +80,24 @@ struct ChatRoomMenuOpener {
         let pressStatus = AXNodeReader.perform(item.element, kAXPressAction)
         runner.log("read: pressed \(MenuItemSafety.openChatRoomIdentifier) status=\(pressStatus.rawValue)")
 
-        if let window = waitForChatWindow(title: row.title, windowsBefore: windowsBefore) {
+        let opened = waitForChatWindow(title: row.title, windowsBefore: windowsBefore)
+        if let window = opened.window {
             return window
         }
 
         if menuIsOpen(on: cell) {
             cancel(menu)
         }
+        var details: [String: String] = [:]
+        if !opened.newWindowTitles.isEmpty {
+            // Left open on purpose: it cannot be proven that this command opened them.
+            details["unexpected_new_windows"] = opened.newWindowTitles.joined(separator: ", ")
+        }
         throw ReadFailure(
             code: "CHAT_WINDOW_NOT_OPENED",
             message: "No chat window titled '\(row.title)' appeared after pressing \(MenuItemSafety.openChatRoomTitle) (AXPress status \(pressStatus.rawValue)).",
-            hint: "Retry, or check KakaoTalk for a dialog."
+            hint: "Retry, or check KakaoTalk for a dialog.",
+            details: details
         )
     }
 
@@ -96,8 +105,9 @@ struct ChatRoomMenuOpener {
 
     private func verify(_ row: LocatedChatRow, allowUnread: Bool, stage: String) throws {
         let summary = ChatListScanner.summarize(row: row.element)
-        let currentTitle = summary.title ?? ""
-        guard ChatTextNormalizer.normalize(currentTitle) == ChatTextNormalizer.normalize(row.title) else {
+        let currentTitle = ChatListLocator.trimmed(summary.title)
+        // Exact comparison: rooms whose titles differ only in emoji or punctuation must not pass.
+        guard currentTitle == ChatListLocator.trimmed(row.title) else {
             throw ReadFailure(
                 code: "ROW_CHANGED",
                 message: "The chat list changed \(stage): row \(row.index) is now '\(currentTitle)', not '\(row.title)'.",
@@ -110,7 +120,15 @@ struct ChatRoomMenuOpener {
     }
 
     static func unreadRefusal(title: String, badge: UnreadBadge) -> ReadFailure {
-        ReadFailure(
+        if badge == .unknown(ChatRowAnalyzer.incompleteReadEvidence) {
+            return ReadFailure(
+                code: "UNREAD_UNVERIFIED",
+                message: "'\(title)': the chat-list row could not be read completely, so an unread badge cannot be ruled out; opening it could send read receipts.",
+                hint: "Retry, or pass --allow-unread to open it anyway.",
+                exitCode: ReadFailure.refusedExitCode
+            )
+        }
+        return ReadFailure(
             code: "UNREAD_REFUSED",
             message: "'\(title)' shows unread messages (\(badge.evidence ?? "badge")); opening it would send read receipts.",
             hint: "Pass --allow-unread to open it anyway.",
@@ -205,9 +223,12 @@ struct ChatRoomMenuOpener {
             if let menu = menuChild(of: cell) {
                 return menu
             }
+            if ReadInterruption.requested {
+                break
+            }
             Thread.sleep(forTimeInterval: 0.025)
         }
-        return nil
+        return menuChild(of: cell)
     }
 
     private func menuChild(of cell: AXUIElement) -> AXUIElement? {
@@ -273,30 +294,35 @@ struct ChatRoomMenuOpener {
 
     // MARK: Opened window
 
-    private func waitForChatWindow(title: String, windowsBefore: [AXUIElement], timeout: TimeInterval = 4.0) -> UIElement? {
+    private func waitForChatWindow(
+        title: String,
+        windowsBefore: [AXUIElement],
+        timeout: TimeInterval = 3.0
+    ) -> (window: UIElement?, newWindowTitles: [String]) {
+        let wanted = ChatListLocator.trimmed(title)
         let target = ChatTextNormalizer.normalize(title)
         let deadline = Date().addingTimeInterval(timeout)
         var newWindows: [UIElement] = []
 
         repeat {
             let windows = kakao.windows.filter { $0.identifier != ChatListLocator.mainWindowIdentifier }
-            if let match = windows.first(where: { ChatTextNormalizer.normalize($0.title ?? "") == target }) {
-                return match
+            if let match = windows.first(where: { ChatListLocator.trimmed($0.title) == wanted }) {
+                return (match, [])
             }
             newWindows = windows.filter { window in
                 !windowsBefore.contains { CFEqual($0, window.axElement) }
             }
+            // A single window that appeared after the press and differs only in spacing or
+            // punctuation is the room that was just opened.
+            if newWindows.count == 1, let window = newWindows.first,
+               ChatTextNormalizer.normalize(window.title ?? "") == target
+            {
+                runner.log("read: accepting new window '\(window.title ?? "")' for row title '\(title)'")
+                return (window, [])
+            }
             Thread.sleep(forTimeInterval: 0.05)
-        } while Date() < deadline
+        } while Date() < deadline && !ReadInterruption.requested
 
-        // Accept a single new window whose title still loosely matches (e.g. group rooms whose
-        // window title is formatted differently from the list title).
-        if newWindows.count == 1, let window = newWindows.first, let windowTitle = window.title,
-           ChatQueryMatcher.score(query: title, candidate: windowTitle) > 0
-        {
-            runner.log("read: accepting new window '\(windowTitle)' for row title '\(title)'")
-            return window
-        }
-        return nil
+        return (nil, newWindows.map { $0.title ?? "(untitled)" })
     }
 }

@@ -49,6 +49,8 @@ public struct ChatRowSummary: Equatable, Sendable {
     public var unread: UnreadBadge
     /// "identifier=text" for texts with identifiers this analyzer does not know.
     public var unknownTexts: [String]
+    /// Some node of the row could not be read, so a badge may have been missed.
+    public var readIncomplete: Bool
 
     public init(
         title: String? = nil,
@@ -58,7 +60,8 @@ public struct ChatRowSummary: Equatable, Sendable {
         isPinned: Bool = false,
         preview: String? = nil,
         unread: UnreadBadge = .none,
-        unknownTexts: [String] = []
+        unknownTexts: [String] = [],
+        readIncomplete: Bool = false
     ) {
         self.title = title
         self.titleSource = titleSource
@@ -68,6 +71,7 @@ public struct ChatRowSummary: Equatable, Sendable {
         self.preview = preview
         self.unread = unread
         self.unknownTexts = unknownTexts
+        self.readIncomplete = readIncomplete
     }
 }
 
@@ -84,6 +88,9 @@ public enum ChatRowAnalyzer {
     public static let timeIdentifier = "_NS:69"
     public static let previewIdentifiers: Set<String> = ["_NS:87", "_NS:91"]
     public static let unreadBadgeIdentifier = "_NS:138"
+    /// Unread evidence used when part of the row could not be read: the state is unknown, which
+    /// callers treat like an unread badge (refuse to open).
+    public static let incompleteReadEvidence = "row could not be read completely"
 
     public static func summarize(_ nodes: [AXNodeSnapshot]) -> ChatRowSummary {
         var summary = ChatRowSummary()
@@ -93,6 +100,10 @@ public enum ChatRowAnalyzer {
         var unlabeledTexts: [(text: String, isStaticText: Bool)] = []
 
         for node in nodes {
+            if node.readFailed {
+                summary.readIncomplete = true
+                continue
+            }
             let text = node.text.kmsgTrimmed
 
             if node.identifier == unreadBadgeIdentifier {
@@ -160,6 +171,8 @@ public enum ChatRowAnalyzer {
             summary.unread = counted
         } else if let first = unreadEvidence.first {
             summary.unread = first
+        } else if summary.readIncomplete {
+            summary.unread = .unknown(incompleteReadEvidence)
         }
 
         return summary

@@ -110,6 +110,28 @@ struct ChatRowAnalyzerTests {
         #expect(summary.unread == .count(2))
     }
 
+    @Test("A node that could not be read makes the unread state unknown")
+    func failedReadIsUnknown() {
+        let summary = ChatRowAnalyzer.summarize(rowNodes([
+            text("_NS:40", "가족"),
+            AXNodeSnapshot(role: "", depth: 2, readFailed: true),
+        ]))
+        #expect(summary.title == "가족")
+        #expect(summary.readIncomplete)
+        #expect(summary.unread == .unknown(ChatRowAnalyzer.incompleteReadEvidence))
+        #expect(summary.unread.isUnread)
+    }
+
+    @Test("A real badge wins over the incomplete-read marker")
+    func badgeAndFailedRead() {
+        let summary = ChatRowAnalyzer.summarize(rowNodes([
+            text("_NS:40", "가족"),
+            text("_NS:138", "안읽음 4"),
+            AXNodeSnapshot(role: "", depth: 1, readFailed: true),
+        ]))
+        #expect(summary.unread == .count(4))
+    }
+
     @Test("A row with no usable text has no title")
     func missingTitle() {
         let summary = ChatRowAnalyzer.summarize(rowNodes([Fixture.node("AXButton", id: "_NS:11", desc: "프로필")]))

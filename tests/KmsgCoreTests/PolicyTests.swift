@@ -21,6 +21,13 @@ struct PolicyTests {
         let onlyAppSays = FrontmostPolicy.keyboard(FrontmostEvidence(kakaoPID: 42, focusedApplicationPID: nil, kakaoReportsFrontmost: true))
         #expect(onlyAppSays.allowed)
 
+        // KakaoTalk busy: its AXFrontmost read timed out, but the system says it has focus.
+        let busy = FrontmostPolicy.keyboard(FrontmostEvidence(kakaoPID: 42, focusedApplicationPID: 42, kakaoReportsFrontmost: nil))
+        #expect(busy.allowed)
+
+        let contradicting = FrontmostPolicy.keyboard(FrontmostEvidence(kakaoPID: 42, focusedApplicationPID: 42, kakaoReportsFrontmost: false))
+        #expect(!contradicting.allowed)
+
         let notRunning = FrontmostPolicy.keyboard(FrontmostEvidence(kakaoPID: nil, focusedApplicationPID: 42, kakaoReportsFrontmost: true))
         #expect(!notRunning.allowed)
     }
@@ -85,5 +92,9 @@ struct PolicyTests {
         #expect(ChatQueryMatcher.choose(query: "프로젝트", titles: titles) == .ambiguous(["프로젝트 A", "프로젝트 B"]))
         #expect(ChatQueryMatcher.choose(query: "프로젝트 B", titles: titles) == .match(index: 1, title: "프로젝트 B", exact: true))
         #expect(ChatQueryMatcher.choose(query: "회사", titles: titles) == .none)
+
+        // Titles that differ only in symbols/emoji normalize to the same text: never guess.
+        let lookalikes = [(index: 0, title: "가족🏠"), (index: 1, title: "가족🌸")]
+        #expect(ChatQueryMatcher.choose(query: "가족", titles: lookalikes) == .ambiguous(["가족🏠", "가족🌸"]))
     }
 }

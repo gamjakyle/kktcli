@@ -60,6 +60,27 @@ struct Kmsg: ParsableCommand {
             print(BuildVersion.current)
             return
         }
+        if ReadCommand.wantsJSONErrors(arguments) {
+            runReportingArgumentErrorsAsJSON(arguments)
+        }
         self.main(arguments)
+    }
+
+    /// Same as `main(_:)`, except that argument errors are printed as a JSON error document
+    /// on stdout (exit status 64), because `read --json` promises JSON-only stdout.
+    private static func runReportingArgumentErrorsAsJSON(_ arguments: [String]) -> Never {
+        do {
+            var command = try parseAsRoot(arguments)
+            try command.run()
+            exit()
+        } catch let exitCode as ExitCode {
+            exit(withError: exitCode)
+        } catch {
+            if exitCode(for: error) == .validationFailure {
+                ReadCommand.printArgumentErrorJSON(message(for: error))
+                exit(withError: ExitCode.validationFailure)
+            }
+            exit(withError: error)
+        }
     }
 }

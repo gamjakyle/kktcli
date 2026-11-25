@@ -189,6 +189,11 @@ public enum TranscriptParser {
             .map { nodes[$0].text }
             .filter { !$0.isEmpty }
         let contentSubtrees = content.flatMap { subtree(of: $0, in: nodes) }
+        let textLinks = content
+            .filter { nodes[$0].role == AXRoleName.textArea }
+            .flatMap { subtree(of: $0, in: nodes) }
+            .filter { nodes[$0].role == AXRoleName.link }
+            .compactMap { linkTarget(nodes[$0]) }
         let rowDescendants = nodes.indices.filter { nodes[$0].depth >= 2 }
         let links = rowDescendants
             .filter { nodes[$0].role == AXRoleName.link }
@@ -203,7 +208,7 @@ public enum TranscriptParser {
         var kinds: [String] = []
         if !texts.isEmpty {
             kinds.append("text")
-            body = promoteTruncatedLink(in: body, links: links)
+            body = expandShortenedURLs(in: body, links: textLinks)
         }
         kinds.append(contentsOf: media.map { "media:\($0)" })
         if body.isEmpty, !media.isEmpty {
@@ -283,18 +288,24 @@ public enum TranscriptParser {
         let contentMinX = contentFrames.map(\.minX).min()
         let contentMaxX = contentFrames.map(\.maxX).max()
 
+        var reachesRight: Bool?
+        if let contentMinX, let contentMaxX, let transcriptFrame, transcriptFrame.width > 0 {
+            let right = contentMaxX >= transcriptFrame.maxX - rightAlignmentSlack
+            let startsAtLeft = contentMinX <= transcriptFrame.minX + transcriptFrame.width * fullWidthLeftFraction
+            if right && startsAtLeft {
+                // Spans the whole transcript (channel banner, card): never a bubble of mine,
+                // whatever labels sit next to it.
+                return .unknown
+            }
+            reachesRight = right
+        }
+
         if let metaFrame = metas.lazy.compactMap({ nodes[$0].frame }).first, let contentMinX {
             // KakaoTalk puts my meta label to the LEFT of my bubble and others' to the right.
             return metaFrame.minX < contentMinX ? .me : .other
         }
 
-        guard let contentMinX, let contentMaxX, let transcriptFrame, transcriptFrame.width > 0 else {
-            return .unknown
-        }
-
-        let reachesRight = contentMaxX >= transcriptFrame.maxX - rightAlignmentSlack
-        let startsAtLeft = contentMinX <= transcriptFrame.minX + transcriptFrame.width * fullWidthLeftFraction
-        if reachesRight && startsAtLeft {
+        guard let reachesRight else {
             return .unknown
         }
         return reachesRight ? .me : .other
@@ -382,21 +393,45 @@ public enum TranscriptParser {
         return lowered.hasPrefix("http://") || lowered.hasPrefix("https://")
     }
 
-    /// KakaoTalk shortens long URLs in the bubble ("https://exam..."); the AXLink child keeps the
-    /// full target. Same rule the legacy reader used.
-    static func promoteTruncatedLink(in body: String, links: [String]) -> String {
-        let lowered = body.lowercased()
-        guard lowered.contains("http://") || lowered.contains("https://"), body.contains("...") || body.contains("…") else {
-            return body
+    /// KakaoTalk shortens long URLs in the bubble ("https://exam..."); the message text's AXLink
+    /// child keeps the full target. Only a URL token that ends with an ellipsis and is a prefix of
+    /// one of those links is replaced; all other text is kept as is.
+    static func expandShortenedURLs(in body: String, links: [String]) -> String {
+        guard !links.isEmpty else { return body }
+        var result = ""
+        var token = ""
+        func flush() {
+            result += expandToken(token, links: links)
+            token = ""
         }
-        guard let fullLink = links.max(by: { $0.count < $1.count }) else { return body }
-        if isURL(body) {
-            return fullLink
+        for character in body {
+            if character.isWhitespace {
+                flush()
+                result.append(character)
+            } else {
+                token.append(character)
+            }
         }
-        if body.contains(fullLink) {
-            return body
+        flush()
+        return result
+    }
+
+    private static func expandToken(_ token: String, links: [String]) -> String {
+        guard isURL(token) else { return token }
+        let prefix: String
+        if token.hasSuffix("...") {
+            prefix = String(token.dropLast(3))
+        } else if token.hasSuffix("…") {
+            prefix = String(token.dropLast())
+        } else {
+            return token
         }
-        return "\(body)\n\(fullLink)"
+        guard !prefix.isEmpty,
+              let full = links.filter({ $0.hasPrefix(prefix) && $0.count > prefix.count }).max(by: { $0.count < $1.count })
+        else {
+            return token
+        }
+        return full
     }
 
     static func countURLs(in text: String) -> Int {

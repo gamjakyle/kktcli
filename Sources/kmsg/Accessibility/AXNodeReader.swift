@@ -36,7 +36,7 @@ enum AXNodeReader {
             &output
         )
         guard status == .success, let values = output as? [AnyObject], values.count == attributeNames.count else {
-            return AXLiveNode(element: element, snapshot: AXNodeSnapshot(role: "", depth: depth), children: [])
+            return AXLiveNode(element: element, snapshot: AXNodeSnapshot(role: "", depth: depth, readFailed: true), children: [])
         }
 
         var frame: CGRect?
@@ -68,10 +68,16 @@ enum AXNodeReader {
     }
 
     /// Depth-first, pre-order flatten of `root` (depth 0) limited by depth and node budget.
+    /// When the budget runs out before every node was visited, a `readFailed` marker node
+    /// (depth 1) is appended so callers know the snapshot is incomplete.
     static func flatten(_ root: AXUIElement, maxDepth: Int, budget: Int) -> [AXNodeSnapshot] {
         var remaining = budget
+        var truncated = false
         var result: [AXNodeSnapshot] = []
-        flatten(root, depth: 0, maxDepth: maxDepth, remaining: &remaining, into: &result)
+        flatten(root, depth: 0, maxDepth: maxDepth, remaining: &remaining, truncated: &truncated, into: &result)
+        if truncated {
+            result.append(AXNodeSnapshot(role: "", depth: 1, readFailed: true))
+        }
         return result
     }
 
@@ -80,16 +86,23 @@ enum AXNodeReader {
         depth: Int,
         maxDepth: Int,
         remaining: inout Int,
+        truncated: inout Bool,
         into result: inout [AXNodeSnapshot]
     ) {
-        guard remaining > 0 else { return }
+        guard remaining > 0 else {
+            truncated = true
+            return
+        }
         remaining -= 1
         let node = read(element, depth: depth)
         result.append(node.snapshot)
         guard depth < maxDepth else { return }
         for child in node.children {
-            guard remaining > 0 else { return }
-            flatten(child, depth: depth + 1, maxDepth: maxDepth, remaining: &remaining, into: &result)
+            guard remaining > 0 else {
+                truncated = true
+                return
+            }
+            flatten(child, depth: depth + 1, maxDepth: maxDepth, remaining: &remaining, truncated: &truncated, into: &result)
         }
     }
 
