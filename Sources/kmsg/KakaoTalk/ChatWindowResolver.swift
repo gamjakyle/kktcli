@@ -214,6 +214,13 @@ struct ChatWindowResolver {
         return .stillOpen
     }
 
+    /// Applies a non-default `--layout` (activates, raises and resizes, as before).
+    /// No-op for `preserve` and in background-safe mode.
+    func applyLayoutIfRequested(_ window: UIElement, label: String) {
+        guard layoutMode != .preserve, interactionMode != .backgroundSafe else { return }
+        standardizeReadableWindow(window, label: label)
+    }
+
     private func resolveExistingWindowOnly(query: String) throws -> ChatWindowResolution {
         if let existingWindow = findMatchingChatWindow(in: kakao.windows, query: query) {
             runner.log("background-safe: matched already exposed chat window")

@@ -188,7 +188,9 @@ kmsg chats [options]
 | `-k`, `--keep-window` | Keep a chat-list window that the command opened. |
 
 Each result includes a local synthetic `chat_id`. The registry is refreshed by
-running `kmsg chats` and stored at `~/.kmsg/chat-registry.json`.
+running `kmsg chats` and stored at `~/.kmsg/chat-registry.json`. `has_unread` and
+`unread_count` reflect the row's unread badge; `kmsg read` refuses to open such
+rooms unless `--allow-unread` is given.
 
 ### `read`
 
@@ -209,10 +211,31 @@ A chat name and `--chat-id` are mutually exclusive.
 | `--background-safe` | Read only an already exposed matching window without launching, activating, logging in, searching, opening, resizing, or closing UI. |
 | `--deep-recovery` | Enable deeper window recovery after the fast path fails. |
 | `--layout MODE` | Use `preserve`, `left`, `right`, `split-left`, or `split-right`. Default: `preserve`. |
-| `--json` | Return one structured JSON document. |
+| `--json` | Return one structured JSON document, also on failure. |
+| `--allow-unread` | Open the chat even if its chat-list row shows unread messages (sends read receipts). |
+| `--scrollback` / `--no-scrollback` | Load older messages when fewer than `--limit` are loaded. On by default; opt-in under `--background-safe`. |
+| `--scrollback-timeout SEC` | Time budget for loading older messages. Default: `4`. |
+| `--include-system` | Include system messages such as joins and notices. |
+| `--legacy-open` | Open chats the old way (search typing, row select + Enter, double-click). |
 
 The name form supports partial matching. For repeated automation, use a
 `chat_id` after refreshing the registry with `kmsg chats`.
+
+How a chat is opened:
+
+1. An already open chat window with the same title is read in place.
+2. Otherwise the row is found in the chat list (the registry's last position is
+   checked first for `--chat-id`, and the scan stops at the first match) and
+   opened through its context menu item **채팅방 열기** with Accessibility
+   actions only. No keystrokes or clicks are posted, so KakaoTalk can stay in the
+   background. The window is closed afterwards through its own close button.
+3. A row that shows an unread badge is not opened, because opening it would
+   send read receipts. The command fails with `UNREAD_REFUSED` (exit status `3`)
+   unless `--allow-unread` is given.
+
+`--legacy-open` keeps the previous search/Enter based path. Every keystroke and
+click is posted only after verifying that KakaoTalk is the frontmost app;
+otherwise the command stops with `NOT_FRONTMOST`.
 
 `--background-safe` is suitable for automation that must not disturb foreground
 work, but it fails unless the matching chat window is already exposed.
@@ -239,7 +262,11 @@ kmsg read --help
 MCP clients use the JSON argument `background_safe: true` instead of the CLI
 spelling `--background-safe`.
 
-Messages whose author cannot be resolved are represented as `"(me)"`.
+`author` is `"(me)"` for your own messages and `null` when the sender cannot be
+established (system lines, banners). `date` comes from the transcript's date
+separators. KakaoTalk prints a time only on the last message of a same-author
+run, so earlier messages of the run take that time with `time_source:
+"inferred"`; messages with their own label have `time_source: "label"`.
 
 ### `watch`
 
@@ -408,7 +435,9 @@ kmsg chats --json
     {
       "title": "홍길동",
       "chat_id": "chat_7f42c5e1d9ab",
-      "last_message": "곧 도착해요"
+      "last_message": "곧 도착해요",
+      "has_unread": true,
+      "unread_count": 2
     }
   ]
 }
@@ -422,22 +451,40 @@ kmsg read "홍길동" --limit 20 --json
 
 ```json
 {
+  "ok": true,
   "chat": "홍길동",
+  "chat_id": null,
   "fetched_at": "2026-02-26T01:23:45.678Z",
   "count": 1,
   "messages": [
     {
       "author": "홍길동",
-      "time_raw": "00:27",
-      "date": "2026-02-26",
+      "side": "other",
+      "kind": "message",
       "body": "밤이 깊었네",
+      "date": "2026-02-26",
+      "time": "00:27",
+      "time_raw": "오전 12:27",
+      "time_source": "label",
+      "unread_count": null,
+      "edited": false,
       "has_image": false,
       "image_count": 0,
       "link_count": 0,
       "has_attachment": false,
       "attachment_count": 0
     }
-  ]
+  ],
+  "meta": {
+    "opened_via": "chat_list_menu",
+    "window": "closed",
+    "window_detail": null,
+    "unread_badge": null,
+    "rows_total": 84,
+    "rows_read": 84,
+    "date_from_earlier_separator": false,
+    "scrollback": null
+  }
 }
 ```
 

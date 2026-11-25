@@ -120,6 +120,10 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         return document.records.first(where: { $0.chatID == chatID })
     }
 
+    func records(withNormalizedName normalizedName: String) -> [ChatIdentityRecord] {
+        loadDocument().records.filter { $0.normalizedName == normalizedName }
+    }
+
     private func updatedRecord(
         _ record: ChatIdentityRecord,
         with discovery: ChatListDiscovery,
