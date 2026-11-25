@@ -79,6 +79,15 @@ Every element kktcli presses is identified by role, identifier and title or desc
 `showFirstWindow:` / 카카오톡 열기, a window's close button) and re-verified right before
 the press. Context menus are cancelled rather than guessed at.
 
+### Long messages are flagged, and fetched only on request
+
+KakaoTalk cuts long messages at 500 characters plus "…" with a 전체보기 control below.
+The parser flags them (`truncated`) from the AX snapshot alone. `--full-text` is opt-in
+because it presses: only that message's control, which has no Accessibility label on
+26.10.0 and is therefore recognised by shape (an unlabeled button right below a text that
+ends in "…" at about 500 characters, re-checked right before the press), then the close
+button or AXCancel of exactly what the press opened.
+
 ### Unread rooms are opened, like by hand
 
 Active rooms almost always have unread messages, so refusing them made the most

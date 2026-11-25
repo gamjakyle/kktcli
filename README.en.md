@@ -62,6 +62,7 @@ Please read this first.
 | `chats` titles | Unread badge text could appear as the room title | Title read only from the title label (`_NS:40`); adds `has_unread` / `unread_count` |
 | Message parsing | `date` empty; unlabeled burst messages took the previous message's time | `date` from date separators, burst times inferred (`time_source`: `label` / `inferred`), sender carried forward, channel banners never attributed to `(me)` |
 | Older messages | Only the initially loaded rows | Scrollback (`--scrollback`, time-bounded) |
+| Long messages | Only what the bubble shows, not flagged | Cut messages flagged (`truncated`); `--full-text` fetches the full text (experimental) |
 | Closing windows | First button found, or Cmd+W | Only the window's close button; otherwise left open and reported |
 | Keyboard paths | No check of the frontmost app | Paths that still type (send, login, legacy open) post input only while KakaoTalk is frontmost |
 | `--json` | Plain text when empty or failing | Always exactly one JSON document (error code and exit status) |

@@ -19,6 +19,10 @@ public struct ReadMessageJSON: Encodable, Equatable, Sendable {
     public var imageCount: Int
     public var linkCount: Int
     public var attachmentCount: Int
+    /// Only the beginning of a long message was read (the bubble's "…" + 전체보기).
+    public var truncated: Bool
+    /// The body is the full text read through 전체보기 (`read --full-text`).
+    public var fullTextFetched: Bool
 
     enum CodingKeys: String, CodingKey {
         case author
@@ -36,6 +40,8 @@ public struct ReadMessageJSON: Encodable, Equatable, Sendable {
         case linkCount = "link_count"
         case hasAttachment = "has_attachment"
         case attachmentCount = "attachment_count"
+        case truncated
+        case fullTextFetched = "full_text_fetched"
     }
 
     public init(item: TranscriptItem) {
@@ -52,6 +58,8 @@ public struct ReadMessageJSON: Encodable, Equatable, Sendable {
         imageCount = item.imageCount
         linkCount = item.linkCount
         attachmentCount = item.attachmentCount
+        truncated = item.truncated
+        fullTextFetched = item.fullTextFetched
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -72,6 +80,8 @@ public struct ReadMessageJSON: Encodable, Equatable, Sendable {
         try container.encode(linkCount, forKey: .linkCount)
         try container.encode(attachmentCount > 0, forKey: .hasAttachment)
         try container.encode(attachmentCount, forKey: .attachmentCount)
+        try container.encode(truncated, forKey: .truncated)
+        try container.encode(fullTextFetched, forKey: .fullTextFetched)
     }
 }
 

@@ -64,7 +64,10 @@ kktcli read --chat-id "<chat_id>" --limit 20 --json
 ```
 
 Adjust `--limit` to the request; add `--scrollback` when older messages are needed.
-Summarize by default and include raw content only when asked. `meta.unread_before` is
+Summarize by default and include raw content only when asked. A message with
+`"truncated": true` shows only its first 500 characters; say so, and add `--full-text`
+(experimental; it presses that message's 전체보기 and closes what opens) only when the
+rest of the message matters. `meta.unread_before` is
 not null when the room had unread messages that this read opened; `meta.marked_read`
 says whether the chat-list badge disappeared afterwards. The JSON always has an `ok`
 field; on failure use `error.code`:

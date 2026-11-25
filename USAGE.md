@@ -150,6 +150,7 @@ kktcli read --chat-id <chat-id> [options]
 | `--scrollback` / `--no-scrollback` | Load older messages when fewer than `--limit` are loaded. Automatic by default; opt-in with `--background-safe`. |
 | `--scrollback-timeout SEC` | Time budget for loading older messages (0–600). Default: `4`. Automatic scrollback also stops about 6.5 s after the command started. |
 | `--include-system` | Include system messages (joins, notices). |
+| `--full-text` | Experimental. Fetch the full text of long messages (see [Long messages](#long-messages)). Not with `--background-safe`. |
 | `--background-safe` | Only read an already open chat window; never launch, activate, log in, open, resize or close anything. |
 | `-k`, `--keep-window` | Keep a chat window the command opened. |
 | `--layout MODE` | `preserve` (default), `left`, `right`, `split-left` or `split-right`. Non-default layouts activate and resize the window. |
@@ -194,6 +195,24 @@ fails with `UNREAD_REFUSED` or `UNREAD_UNVERIFIED` and exit status `3`. Without
 `--skip-unread` a badge that cannot be read does not block the read. Apart from the
 last-message preview in `kktcli chats`, kktcli currently has no way to read unread
 messages without marking them read. `--allow-unread` is still accepted and has no effect.
+
+#### Long messages
+
+KakaoTalk shows only the first 500 characters of a long message in its bubble, followed
+by "…" and a **전체보기** (see all) control. By default kktcli returns that visible part and
+marks the message `"truncated": true`; `meta.truncated_messages` counts them. Nothing is
+pressed for this.
+
+`--full-text` (experimental, not yet tested against KakaoTalk) fetches the rest: for each
+truncated message (at most 20 per read) it presses only that message's 전체보기 control,
+re-checked right before the press, reads the full text from what opens (a window, sheet or
+popover, or the bubble itself), and closes exactly that again (a window with its close
+button, a sheet or popover with AXCancel). The message then has `"truncated": false` and
+`"full_text_fetched": true`. When nothing recognisable opens, it is closed and the message
+keeps its cut text and `"truncated": true`. `meta.full_text` reports `requested`, `fetched`,
+`failures` (`message_index`, `reason`) and `left_open`. On KakaoTalk 26.10.0 the control
+has no Accessibility label: kktcli recognises it as the unlabeled button right below a text
+that ends in "…" at about 500 characters.
 
 Recovery, only when the wanted row is missing:
 
@@ -369,6 +388,7 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
       "body": "밤이 깊었네",
       "date": "2026-11-24",
       "edited": false,
+      "full_text_fetched": false,
       "has_attachment": false,
       "has_image": false,
       "image_count": 0,
@@ -378,11 +398,13 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
       "time": "00:27",
       "time_raw": "오전 12:27",
       "time_source": "label",
+      "truncated": false,
       "unread_count": null
     }
   ],
   "meta": {
     "date_from_earlier_separator": false,
+    "full_text": null,
     "interrupted": false,
     "list_recovery": null,
     "main_window": null,
@@ -392,6 +414,7 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
     "rows_read": 84,
     "rows_total": 84,
     "scrollback": null,
+    "truncated_messages": 0,
     "unread_after": null,
     "unread_before": null,
     "window": "closed",

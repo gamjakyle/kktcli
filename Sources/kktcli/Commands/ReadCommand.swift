@@ -124,6 +124,12 @@ struct ReadCommand: ParsableCommand {
     @Flag(name: .long, help: "Include system messages (joins, notices)")
     var includeSystem: Bool = false
 
+    @Flag(
+        name: .long,
+        help: "Fetch the full text of long messages (KakaoTalk shows only the first 500 characters): presses only each one's 전체보기 control and closes what that opens (experimental)"
+    )
+    var fullText: Bool = false
+
     func validate() throws {
         // With --json the problem is reported as a JSON document from run().
         if !json, let problem = usageProblem() {
@@ -245,6 +251,9 @@ struct ReadCommand: ParsableCommand {
         if scrollback && noScrollback {
             return "--scrollback and --no-scrollback cannot be used together."
         }
+        if fullText && backgroundSafe {
+            return "--full-text cannot be used with --background-safe (it presses 전체보기 and closes what that opens)."
+        }
         if scrollbackTimeout < 0 || scrollbackTimeout > Self.maximumScrollbackTimeout {
             return "--scrollback-timeout must be between 0 and \(Int(Self.maximumScrollbackTimeout)) seconds."
         }
@@ -335,7 +344,8 @@ struct ReadCommand: ParsableCommand {
                     includeSystem: includeSystem,
                     scrollback: scrollbackEnabled,
                     scrollbackTimeout: budget
-                )
+                ),
+                fullText: fullText ? FullTextFetcher(kakao: kakao, runner: runner) : nil
             )
         }
 
@@ -740,6 +750,8 @@ struct ReadCommand: ParsableCommand {
         let dateFromEarlierSeparator: Bool
         let scrollback: ScrollbackReport?
         let interrupted: Bool
+        let truncatedMessages: Int
+        let fullText: FullTextFetcher.Report?
 
         enum CodingKeys: String, CodingKey {
             case openedVia = "opened_via"
@@ -757,6 +769,8 @@ struct ReadCommand: ParsableCommand {
             case dateFromEarlierSeparator = "date_from_earlier_separator"
             case scrollback
             case interrupted
+            case truncatedMessages = "truncated_messages"
+            case fullText = "full_text"
         }
 
         func encode(to encoder: Encoder) throws {
@@ -776,6 +790,8 @@ struct ReadCommand: ParsableCommand {
             try container.encode(dateFromEarlierSeparator, forKey: .dateFromEarlierSeparator)
             try container.encode(scrollback, forKey: .scrollback)
             try container.encode(interrupted, forKey: .interrupted)
+            try container.encode(truncatedMessages, forKey: .truncatedMessages)
+            try container.encode(fullText, forKey: .fullText)
         }
     }
 
@@ -841,7 +857,9 @@ struct ReadCommand: ParsableCommand {
                     rowsRead: outcome.result.rowsRead,
                     dateFromEarlierSeparator: outcome.result.usedEarlierDateSeparator,
                     scrollback: outcome.result.scrollback,
-                    interrupted: outcome.result.interrupted
+                    interrupted: outcome.result.interrupted,
+                    truncatedMessages: items.filter(\.truncated).count,
+                    fullText: outcome.result.fullText
                 )
             )
             let data = try Self.makeEncoder().encode(payload)
@@ -873,6 +891,9 @@ struct ReadCommand: ParsableCommand {
             print("[\(index + 1)] author: \(author)")
             print("    time: \(when)")
             print("    body: \(item.body)")
+            if item.truncated {
+                print("    note: truncated; KakaoTalk shows only the first \(LongMessage.visibleLimit) characters (--full-text fetches the rest)")
+            }
             print("")
         }
 
@@ -893,6 +914,13 @@ struct ReadCommand: ParsableCommand {
         }
         if outcome.result.interrupted {
             writeStderr("Note: interrupted; the messages above are what had been read.\n")
+        }
+        let truncated = items.filter(\.truncated).count
+        if truncated > 0 {
+            writeStderr("Note: \(truncated) long message(s) are cut at \(LongMessage.visibleLimit) characters" + (fullText ? "; their full text could not be fetched.\n" : "; --full-text fetches the full text.\n"))
+        }
+        if let report = outcome.result.fullText, !report.leftOpen.isEmpty {
+            writeStderr("Note: full-text view(s) left open: \(report.leftOpen.joined(separator: ", ")).\n")
         }
     }
 

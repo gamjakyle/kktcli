@@ -58,6 +58,8 @@ Main window (identifier "Main Window"):
 Chat window (title = room name; team, self and open chats drop the "팀채팅, ",
 "나와의 채팅, ", "오픈채팅, " row prefix; open chats may have an EMPTY title):
 ├── AXScrollArea _NS:32 > AXTable > AXRow (transcript)
+│   long message: AXTextArea value = first 500 chars + "…", then an AXButton with NO
+│   title/description/identifier right below it (35 pt tall) = 전체보기
 └── AXTextArea _NS:51 "메시지 입력"
 ```
 

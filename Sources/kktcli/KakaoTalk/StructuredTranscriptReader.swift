@@ -53,6 +53,8 @@ struct StructuredTranscriptResult {
     let usedEarlierDateSeparator: Bool
     /// SIGINT/SIGTERM arrived; reading stopped early with what was already read.
     let interrupted: Bool
+    /// `--full-text` only.
+    let fullText: FullTextFetcher.Report?
 }
 
 /// Reads a chat window's transcript table row by row (batched AX reads) and parses it with
@@ -139,7 +141,7 @@ struct StructuredTranscriptReader {
         return parts ?? Self.parts(in: window)
     }
 
-    func read(_ parts: TranscriptAXParts, options: TranscriptReadOptions) -> StructuredTranscriptResult {
+    func read(_ parts: TranscriptAXParts, options: TranscriptReadOptions, fullText: FullTextFetcher? = nil) -> StructuredTranscriptResult {
         var tail = readTail(parts, options: options)
         var report: ScrollbackReport?
         var scrollBarToRestore: (element: AXUIElement, original: Double)?
@@ -210,6 +212,12 @@ struct StructuredTranscriptReader {
             usedEarlierSeparator = true
         }
 
+        // Long messages are fetched while their rows are still loaded (before scrolling back down).
+        var fullTextReport: FullTextFetcher.Report?
+        if let fullText {
+            fullTextReport = fetchFullTexts(&selected, tail: tail, parts: parts, fetcher: fullText)
+        }
+
         // Rows are read before restoring: scrolling back down may unload older rows.
         if let scrollBarToRestore, scrollBarToRestore.original >= 0.98 {
             let status = AXNodeReader.setNumber(scrollBarToRestore.element, kAXValueAttribute, 1.0)
@@ -222,8 +230,54 @@ struct StructuredTranscriptReader {
             rowsRead: tail.rows.count,
             scrollback: report,
             usedEarlierDateSeparator: usedEarlierSeparator,
-            interrupted: ReadInterruption.requested
+            interrupted: ReadInterruption.requested,
+            fullText: fullTextReport
         )
+    }
+
+    /// Replaces the body of each truncated message with its full text where `fetcher` can read
+    /// it (at most `FullTextFetcher.maximumFetches` presses).
+    private func fetchFullTexts(
+        _ selected: inout [TranscriptItem],
+        tail: TailRead,
+        parts: TranscriptAXParts,
+        fetcher: FullTextFetcher
+    ) -> FullTextFetcher.Report {
+        var report = FullTextFetcher.Report()
+        var attempts = 0
+        for index in selected.indices where selected[index].truncated {
+            report.requested += 1
+            guard let cutText = selected[index].cutText else { continue }
+            if ReadInterruption.requested {
+                report.failures.append(.init(messageIndex: index, reason: "skipped: interrupted"))
+                continue
+            }
+            if attempts >= FullTextFetcher.maximumFetches {
+                report.failures.append(.init(messageIndex: index, reason: "skipped: at most \(FullTextFetcher.maximumFetches) per read"))
+                continue
+            }
+            let position = tail.start + selected[index].rowIndex
+            guard tail.rowElements.indices.contains(position) else {
+                report.failures.append(.init(messageIndex: index, reason: "the message's row was not found"))
+                continue
+            }
+            attempts += 1
+            switch fetcher.fetch(row: tail.rowElements[position], cutText: cutText, parts: parts) {
+            case .fetched(let text, let leftOpen):
+                let body = selected[index].body
+                selected[index].body = body.contains(cutText) ? body.replacingOccurrences(of: cutText, with: text) : text
+                selected[index].truncated = false
+                selected[index].fullTextFetched = true
+                report.fetched += 1
+                if let leftOpen {
+                    report.leftOpen.append(leftOpen)
+                }
+            case .failed(let reason):
+                report.failures.append(.init(messageIndex: index, reason: reason))
+            }
+        }
+        runner.log("read: full text fetched for \(report.fetched) of \(report.requested) truncated message(s)")
+        return report
     }
 
     // MARK: Tail reading

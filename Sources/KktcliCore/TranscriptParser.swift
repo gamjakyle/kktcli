@@ -56,6 +56,12 @@ public struct TranscriptItem: Equatable, Sendable {
     public var contentKinds: [String]
     /// Index of the source row inside the parsed slice.
     public var rowIndex: Int
+    /// The bubble shows only the beginning of a long message ("…" plus 전체보기).
+    public var truncated: Bool
+    /// The cut text exactly as the bubble's text area shows it (for re-identifying the row).
+    public var cutText: String?
+    /// The body was replaced by the full text read through 전체보기 (`read --full-text`).
+    public var fullTextFetched: Bool
 
     public init(
         kind: Kind,
@@ -73,7 +79,10 @@ public struct TranscriptItem: Equatable, Sendable {
         linkCount: Int = 0,
         attachmentCount: Int = 0,
         contentKinds: [String] = [],
-        rowIndex: Int
+        rowIndex: Int,
+        truncated: Bool = false,
+        cutText: String? = nil,
+        fullTextFetched: Bool = false
     ) {
         self.kind = kind
         self.side = side
@@ -91,6 +100,9 @@ public struct TranscriptItem: Equatable, Sendable {
         self.attachmentCount = attachmentCount
         self.contentKinds = contentKinds
         self.rowIndex = rowIndex
+        self.truncated = truncated
+        self.cutText = cutText
+        self.fullTextFetched = fullTextFetched
     }
 }
 
@@ -184,10 +196,16 @@ public enum TranscriptParser {
         }
         let content = top.filter { !profile.contains($0) && !metas.contains($0) && !names.contains($0) && !editedMarkers.contains($0) }
 
-        let texts = content
-            .filter { nodes[$0].role == AXRoleName.textArea }
+        let textAreas = content.filter { nodes[$0].role == AXRoleName.textArea }
+        let texts = textAreas
             .map { nodes[$0].text }
             .filter { !$0.isEmpty }
+        // A long message shows only its beginning, "…" and a 전체보기 control below the text.
+        let cutText = textAreas.lazy
+            .filter { LongMessage.looksCut(nodes[$0].text) }
+            .filter { LongMessage.isTruncated(text: nodes[$0].text, hasSeeAllControl: LongMessage.seeAllControl(for: $0, in: nodes) != nil) }
+            .map { nodes[$0].text }
+            .first
         let contentSubtrees = content.flatMap { subtree(of: $0, in: nodes) }
         let textLinks = content
             .filter { nodes[$0].role == AXRoleName.textArea }
@@ -269,7 +287,9 @@ public enum TranscriptParser {
             linkCount: max(links.count, countURLs(in: body)),
             attachmentCount: attachmentCount,
             contentKinds: kinds,
-            rowIndex: rowIndex
+            rowIndex: rowIndex,
+            truncated: cutText != nil,
+            cutText: cutText
         )
     }
 
