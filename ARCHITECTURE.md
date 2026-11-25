@@ -29,6 +29,8 @@ CLI commands (Sources/kktcli/Commands)
 | `ChatRoomMenuOpener` | Scrolls the list with the scroll-bar value, shows the row's context menu (AXShowMenu) and presses only **채팅방 열기** (`openChatRoom:`) after re-checking the title (and, with `--skip-unread`, the unread badge); cancels anything else. Returns the badge seen right before the press. Accepts a window titled for the row, or the single new window even when untitled (open chats) if it shows a transcript or message input; if none is accepted, closes every window that appeared after the press. |
 | `ChatListRecoverer` | Restores a search-filtered chat list by pressing only **취소** inside the search field and the top-bar **검색** toggle. |
 | `StructuredTranscriptReader` | Locates the transcript (`_NS:32` scroll area), reads rows newest-first until the limit and its context are covered, loads older rows by setting the scroll bar to 0 and polling the row count, probes for an earlier date separator. |
+| `UserActivityGuard` | Before each press that opens or brings up a KakaoTalk window: waits while KakaoTalk may be frontmost and the HID idle time is below `--idle-seconds` (always for 카카오톡 열기), re-checks right before the press, gives up with `KAKAOTALK_IN_USE`. Decision in `KktcliCore/UserActivityPolicy`. |
+| `MainWindowAccess` | Reopens a main window that Accessibility does not show only when KakaoTalk is frontmost or `--allow-activate` (`MainWindowPolicy`); otherwise `MAIN_WINDOW_NOT_VISIBLE` with Accessibility and window-server counts. |
 | `KakaoTalkInputGuard` | Checks, immediately before every posted key press or click, that KakaoTalk is frontmost (and owns the click point). |
 | `ChatWindowResolver`, `MessageContextResolver`, `KakaoTalkTranscriptReader` | Older search/keyboard based paths used by `send`, `send-image`, `watch` and `read --legacy-open`. |
 | `ChatIdentityRegistryStore` | Local synthetic `chat_id` values derived from normalized names, with last seen row and preview. |
@@ -78,6 +80,18 @@ Every element kktcli presses is identified by role, identifier and title or desc
 (`openChatRoom:` / 채팅방 열기, 취소 inside the search field, the top-bar 검색 toggle,
 `showFirstWindow:` / 카카오톡 열기, a window's close button) and re-verified right before
 the press. Context menus are cancelled rather than guessed at.
+
+### Never take the user's keyboard or desktop
+
+Two live findings shape every press. A window opened while KakaoTalk is in front becomes
+key and takes whatever the user is typing (Enter would send it to that room), so
+window-opening presses wait for an idle user or a KakaoTalk in the background, and are
+re-checked right before they happen. And while the user works in another full-screen Space,
+Accessibility reports no KakaoTalk windows, which looks exactly like a closed main window;
+reopening it there would switch the user's desktop, so it is done only when KakaoTalk is
+already in front or the caller explicitly allows activation. The idle time comes from the
+HID system state (no permission needed); the window-server counts in the error are reported,
+not interpreted, because they cannot tell a closed window from one on another Space.
 
 ### Long messages are flagged, and fetched only on request
 

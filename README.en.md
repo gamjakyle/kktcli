@@ -44,6 +44,19 @@ Please read this first.
   shows an unread badge is then not opened and `read` stops with `UNREAD_REFUSED` (exit
   status 3). kktcli currently has no way to see unread messages without marking them
   read, apart from the last-message preview that `chats` shows.
+- **Nothing is opened while you use KakaoTalk.** When KakaoTalk is in front, a room
+  window kktcli opens becomes the key window: what you are typing goes into that room, and
+  Enter could send it to the wrong room. So while KakaoTalk is in front and the keyboard or
+  mouse was used less than 10 s ago (`--idle-seconds`), kktcli presses nothing that opens or
+  brings up a window and waits; after 30 s (`--wait-for-idle`) it stops with
+  `KAKAOTALK_IN_USE` (exit status 75). With KakaoTalk in the background, rooms open in the
+  background.
+- **KakaoTalk is not brought to another desktop or full-screen Space.** While you work in
+  another full-screen Space, Accessibility shows no KakaoTalk windows at all. Reopening the
+  main window with 카카오톡 열기 would bring KakaoTalk to the front and switch your desktop,
+  so unless KakaoTalk is already in front kktcli presses nothing and stops with
+  `MAIN_WINDOW_NOT_VISIBLE`. Show KakaoTalk on the current desktop, or pass
+  `--allow-activate`.
 - **Chat contents stay on this Mac.** kktcli contains no network code. If you pipe its
   output into an AI service (a coding agent, a chatbot), that content is transferred to
   that company, together with your chat partners' personal data. Read only what the
@@ -67,7 +80,7 @@ Please read this first.
 | Keyboard paths | No check of the frontmost app | Paths that still type (send, login, legacy open) post input only while KakaoTalk is frontmost |
 | `--json` | Plain text when empty or failing | Always exactly one JSON document (error code and exit status) |
 | List state recovery | None | Restores a search-filtered chat list and a closed main window by pressing only specific buttons / menu items |
-| Team and open chats | Could fail in the search fallback | Matches row titles `팀채팅, <name>` / `오픈채팅, <name>` with window title `<name>`; recognises an untitled open-chat window when it shows a chat |
+| Team and open chats | Could fail in the search fallback | Matches row titles `팀채팅, <name>` / `오픈채팅, <name>` with window title `<name>`; recognises an untitled open-chat window when it shows a chat; a row that opens the list of 1:1 open-chat conversations is closed and reported as `OPEN_CHAT_LIST` (those conversations cannot be read) |
 | Distribution | `update` command, Homebrew, release automation | Build from source; no network code; separate data directories |
 | MCP | `kmsg_*` tools | `kktcli_*` tools, `skip_unread` and scrollback options, read error codes passed through |
 

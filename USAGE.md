@@ -125,6 +125,9 @@ kktcli chats [options]
 | `--trace-ax` | Print AX traversal details. |
 | `--json` | Return one JSON document. |
 | `-k`, `--keep-window` | Keep a chat-list window that the command opened. |
+| `--idle-seconds SEC` | While KakaoTalk is in front, press nothing that opens or brings up a KakaoTalk window until the keyboard and mouse were idle this long (0–600). Default: `10`. See [Desktops and the activity guard](#desktops-and-the-activity-guard). |
+| `--wait-for-idle SEC` | Wait at most this long for that, then fail with `KAKAOTALK_IN_USE` (0–600; `0` fails at once). Default: `30`. |
+| `--allow-activate` | When KakaoTalk's main window is not visible, allow reopening it with 카카오톡 열기 even though that brings KakaoTalk to the front and may switch desktops. |
 
 Each entry has a local synthetic `chat_id` (stored in `~/.kktcli/chat-registry.json`),
 the title from the row's title label, `has_unread` / `unread_count` from its unread
@@ -154,6 +157,9 @@ kktcli read --chat-ids-file <file> [options]
 | `--scrollback-timeout SEC` | Time budget for loading older messages (0–600). Default: `4`. Automatic scrollback also stops about 6.5 s after the command started. |
 | `--include-system` | Include system messages (joins, notices). |
 | `--full-text` | Experimental. Fetch the full text of long messages (see [Long messages](#long-messages)). Not with `--background-safe`. |
+| `--idle-seconds SEC` | While KakaoTalk is in front, press nothing that opens or brings up a KakaoTalk window until the keyboard and mouse were idle this long (0–600). Default: `10`. See [Desktops and the activity guard](#desktops-and-the-activity-guard). |
+| `--wait-for-idle SEC` | Wait at most this long for that, then fail with `KAKAOTALK_IN_USE` (0–600; `0` fails at once). Default: `30`. |
+| `--allow-activate` | When KakaoTalk's main window is not visible, allow reopening it with 카카오톡 열기 even though that brings KakaoTalk to the front and may switch desktops. |
 | `--background-safe` | Only read an already open chat window; never launch, activate, log in, open, resize or close anything. |
 | `-k`, `--keep-window` | Keep a chat window the command opened. |
 | `--layout MODE` | `preserve` (default), `left`, `right`, `split-left` or `split-right`. Non-default layouts activate and resize the window. |
@@ -199,6 +205,33 @@ fails with `UNREAD_REFUSED` or `UNREAD_UNVERIFIED` and exit status `3`. Without
 last-message preview in `kktcli chats`, kktcli currently has no way to read unread
 messages without marking them read. `--allow-unread` is still accepted and has no effect.
 
+#### Desktops and the activity guard
+
+**Another desktop or full-screen Space.** While you work in another full-screen Space,
+Accessibility reports no KakaoTalk windows at all (the window server still lists them, off
+screen). kktcli cannot tell that apart from a closed main window. Reopening the main window
+with 카카오톡 열기 brings KakaoTalk to the front and can switch your desktop, so when the
+main window is not visible and KakaoTalk is not in front, `chats` and `read` press nothing
+and fail with `MAIN_WINDOW_NOT_VISIBLE`. Show KakaoTalk on the current desktop, or pass
+`--allow-activate`. When KakaoTalk is already in front, the main window is reopened (no app
+switch). The error's `details` give `kakao_frontmost`, `ax_window_count` and the window
+server's layer-0 KakaoTalk window counts (`cg_layer0_window_count`,
+`cg_layer0_offscreen_count`); they do not say which case it is.
+
+**While you use KakaoTalk.** When KakaoTalk is in front, a window opened by 채팅방 열기 or
+전체보기 becomes the key window: what you are typing goes into that room, and Enter would
+send it there. So while KakaoTalk is (or may be) in front and the keyboard or mouse was used
+less than `--idle-seconds` ago (default 10), kktcli presses nothing that opens or brings up
+a KakaoTalk window: the room's context menu and 채팅방 열기, 전체보기, the list recovery
+buttons, the legacy open, and each chat of a batch. 카카오톡 열기 activates KakaoTalk, so
+it always waits for an idle user, whatever app is in front. kktcli checks every 0.5 s and
+goes on as soon as KakaoTalk is in the background or idle; the check is repeated right before
+each press. After `--wait-for-idle` seconds (default 30) it gives up with `KAKAOTALK_IN_USE`
+(exit status 75) and presses nothing. `meta.waited_for_user_ms` is the time spent waiting;
+it does not count against the automatic scrollback budget. The idle time is the system's
+time since the last keyboard or mouse input and needs no extra permission. When KakaoTalk is
+in the background, opening rooms leaves it there.
+
 #### Long messages
 
 KakaoTalk shows only the first 500 characters of a long message in its bubble, followed
@@ -216,6 +249,13 @@ keeps its cut text and `"truncated": true`. `meta.full_text` reports `requested`
 `failures` (`message_index`, `reason`) and `left_open`. On KakaoTalk 26.10.0 the control
 has no Accessibility label: kktcli recognises it as the unlabeled button right below a text
 that ends in "…" at about 500 characters.
+
+**Open-chat conversation lists (known limitation).** Some "오픈채팅, …" rows (1:1 open
+chats) do not open a chat but an untitled window listing the 1:1 conversations. kktcli
+recognises that window (a list table, no transcript and no input), presses nothing in it,
+closes it with its close button and fails with `OPEN_CHAT_LIST` (exit status 4); `details`
+give `conversation_count` and `conversations` (each title and time). Reading those
+conversations is not supported.
 
 Recovery, only when the wanted row is missing:
 
@@ -325,12 +365,13 @@ Each tool call runs the same `kktcli` binary as a subprocess.
 
 | Tool | Purpose |
 |---|---|
-| `kktcli_read` | Read by `chat` or `chat_id`. Options: `limit` (1–500), `skip_unread` (default `false`; `allow_unread` is accepted and ignored), `scrollback` (true/false; omit for automatic), `scrollback_timeout` (seconds), `include_system`, `background_safe`, `keep_window`, `layout`, `deep_recovery`, `trace_ax`. |
+| `kktcli_read` | Read by `chat` or `chat_id`. Options: `limit` (1–500), `skip_unread` (default `false`; `allow_unread` is accepted and ignored), `scrollback` (true/false; omit for automatic), `scrollback_timeout` (seconds), `idle_seconds`, `wait_for_idle`, `allow_activate`, `include_system`, `background_safe`, `keep_window`, `layout`, `deep_recovery`, `trace_ax`. |
 | `kktcli_send` | Send a text message by chat name. |
 | `kktcli_send_image` | Send a local image by chat name. |
 
-A read call times out after 8 s (15 s with `deep_recovery`); an explicit
-`scrollback: true` extends that by `scrollback_timeout` plus 2 s. Failed reads return
+A read call times out after 8 s (15 s with `deep_recovery`) plus `wait_for_idle` (default
+30 s, the most kktcli waits for an idle user); an explicit `scrollback: true` extends that by
+`scrollback_timeout` plus 2 s. Failed reads return
 the code kktcli reported (see [Error codes](#error-codes)) with its message, hint and
 details; `meta.read` of a successful read carries kktcli's own `meta`.
 
@@ -372,9 +413,13 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
       "unread_count": 2
     }
   ],
-  "count": 1
+  "count": 1,
+  "ok": true
 }
 ```
+
+On failure `chats --json` prints an error document like `read` does (`"ok": false`, `error`,
+`details`).
 
 ### `read --json`
 
@@ -420,6 +465,7 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
     "truncated_messages": 0,
     "unread_after": null,
     "unread_before": null,
+    "waited_for_user_ms": 0,
     "window": "closed",
     "window_detail": null,
     "window_title_empty": false
@@ -461,9 +507,14 @@ order, each exactly the document a single read prints (`ok`, `chat`, `chat_id`,
 }
 ```
 
-(`messages` and `meta` shortened.) Exit status: `0` when every chat was read, `130` when
-interrupted (the chats not yet read get `INTERRUPTED`), otherwise `1`. Problems with the
-arguments, permission or login stop the whole run with a single error document.
+(`messages` and `meta` shortened.) Each chat first waits for the activity guard, with its
+own `--wait-for-idle` budget. When a chat fails with `KAKAOTALK_IN_USE`, the remaining chats
+are not attempted (they get the same code) instead of each waiting again; any other failure
+(for example `OPEN_CHAT_LIST`) is that chat's result and the run continues. Exit status: `0`
+when every chat was read, `130` when interrupted (the chats not yet read get `INTERRUPTED`),
+`75` when KakaoTalk was in use, otherwise `1`. Problems with the arguments, permission,
+login or a main window that is not visible (`MAIN_WINDOW_NOT_VISIBLE`) stop the whole run
+with a single error document.
 
 ### Errors
 
@@ -496,6 +547,9 @@ arguments, permission or login stop the whole run with a single error document.
 | `CHAT_LIST_UNAVAILABLE` | 1 | The main window shows no chat list (e.g. another tab). |
 | `WINDOW_NOT_READY` | 1 | The main window could not be found or reopened. |
 | `MAIN_WINDOW_MINIMIZED`, `KAKAO_HIDDEN` | 1 | Restore KakaoTalk's window first. |
+| `MAIN_WINDOW_NOT_VISIBLE` | 1 | The main window is not visible (closed, minimised, or on another desktop or full-screen Space) and KakaoTalk is not in front; nothing was pressed. Show KakaoTalk, or pass `--allow-activate`. |
+| `KAKAOTALK_IN_USE` | 75 | KakaoTalk stayed in front and in use for the whole `--wait-for-idle`; nothing was pressed. Retry later. |
+| `OPEN_CHAT_LIST` | 4 | The row opened a list of 1:1 open-chat conversations, not a chat; it was closed and nothing was read. |
 | `ROW_NOT_VISIBLE` | 1 | The row could not be scrolled into view. |
 | `ROW_CHANGED` | 1 | The list reordered while opening; retry. |
 | `MENU_UNAVAILABLE`, `MENU_ITEM_MISSING`, `MENU_ITEM_BLOCKED` | 1 | The context menu could not be used; nothing was pressed. |
@@ -539,6 +593,19 @@ never reads or writes `~/.kmsg` or `~/.config/kmsg`.
 Run `kktcli status`, then enable the exact `kktcli` binary under **System Settings →
 Privacy & Security → Accessibility**. A rebuilt or moved binary may need to be added
 again.
+
+### `MAIN_WINDOW_NOT_VISIBLE`
+
+KakaoTalk's main window is closed, minimised, or on another desktop or full-screen Space,
+and KakaoTalk is not in front. kktcli did not reopen it because that would bring KakaoTalk
+to the front and may switch your desktop. Show KakaoTalk on the current desktop (or bring it
+to the front yourself) and retry, or pass `--allow-activate`.
+
+### `KAKAOTALK_IN_USE`
+
+KakaoTalk was in front and you were using it for the whole `--wait-for-idle`, so kktcli did
+not open anything that could take your typing. Retry when you are done, switch to another
+app (rooms then open in the background), or raise `--wait-for-idle`.
 
 ### `UNREAD_REFUSED`
 

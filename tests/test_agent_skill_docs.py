@@ -56,6 +56,16 @@ class ProjectDocumentationTests(unittest.TestCase):
         for number in ("20/20", "17/20", "3.2 s", "99.7%", "87.9%", "98.1%", "182/182"):
             self.assertIn(number, readme)
 
+    def test_docs_explain_the_activity_guard_and_spaces(self) -> None:
+        for path in (README_KO, README_EN, USAGE):
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                for code in ("KAKAOTALK_IN_USE", "MAIN_WINDOW_NOT_VISIBLE", "--allow-activate", "--idle-seconds", "--wait-for-idle"):
+                    self.assertIn(code, text)
+        usage = USAGE.read_text(encoding="utf-8")
+        for text in ("#### Desktops and the activity guard", "`meta.waited_for_user_ms`", "| `KAKAOTALK_IN_USE` | 75 |", "| `OPEN_CHAT_LIST` | 4 |", '"ok": true\n}'):
+            self.assertIn(text, usage)
+
     def test_usage_documents_unread_rooms_and_the_meta_fields(self) -> None:
         usage = USAGE.read_text(encoding="utf-8")
         for text in (

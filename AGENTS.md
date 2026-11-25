@@ -55,6 +55,12 @@ Main window (identifier "Main Window"):
     _NS:138 unread badge ("안읽음 N"); the cell supports AXShowMenu
     (menu item openChatRoom: "채팅방 열기")
 
+Open-chat conversation list (some 1:1 "오픈채팅, …" rows open this instead of a chat;
+untitled AXStandardWindow, never press anything in it):
+├── AXImage _NS:81 header, AXButton _NS:167 "버튼"
+└── AXScrollArea _NS:14 > AXTable _NS:18 > AXRow > AXCell
+    _NS:11 "프로필", _NS:40 title, _NS:69 time, _NS:87 preview
+
 Chat window (title = room name; team, self and open chats drop the "팀채팅, ",
 "나와의 채팅, ", "오픈채팅, " row prefix; open chats may have an EMPTY title):
 ├── AXScrollArea _NS:32 > AXTable > AXRow (transcript)
@@ -71,6 +77,12 @@ Chat window (title = room name; team, self and open chats drop the "팀채팅, "
 - The read path must not post keyboard or mouse events. Any code that posts them goes
   through `AXActionRunner`, which checks `KakaoTalkInputGuard` before every press.
 - Press only allowlisted elements and re-verify them right before the press.
+- Every press that opens or brings up a KakaoTalk window waits for `UserActivityGuard`
+  (KakaoTalk in front and used < `--idle-seconds` ago → wait, then `KAKAOTALK_IN_USE`) and
+  re-checks it right before the press. 카카오톡 열기 goes only through `MainWindowAccess`:
+  never when the main window is not visible and KakaoTalk is not in front, unless
+  `--allow-activate` (`MAIN_WINDOW_NOT_VISIBLE`). A full-screen Space elsewhere makes
+  Accessibility report zero KakaoTalk windows.
 - `read` opens rooms with unread messages, which sends read receipts like opening them
   by hand; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`, exit status 3) and
   `--allow-unread` is a deprecated no-op. Keep `meta.unread_before`, `unread_after` and

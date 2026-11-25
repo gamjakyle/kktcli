@@ -25,6 +25,10 @@ Claude Code users can invoke this skill with `/kktcli`.
   unread messages without marking them read. If the user wants messages left unread,
   read with `--skip-unread`: it stops with `UNREAD_REFUSED` (exit status 3) instead of
   opening the room. Do not open unread rooms the user did not ask about.
+- **Never take over the user's screen.** Do not add `--allow-activate` on your own: it
+  brings KakaoTalk to the front and may switch the user's desktop. kktcli also waits, and
+  then stops with `KAKAOTALK_IN_USE`, while the user is typing in KakaoTalk; do not retry
+  that in a loop.
 - `send` and `send-image` change external state. Run them only when the user explicitly
   asked or authorized sending that exact content to that exact chat.
 - A request to draft, rewrite, preview or prepare a message is not permission to send.
@@ -77,6 +81,13 @@ field; on failure use `error.code`:
   read.
 - `CHAT_NOT_IN_LIST`, `AMBIGUOUS_CHAT`, `UNKNOWN_CHAT_ID`: refresh with `kktcli chats
   --json` and confirm the chat with the user.
+- `MAIN_WINDOW_NOT_VISIBLE`: KakaoTalk's main window is closed, minimised, or on another
+  desktop or full-screen Space. Ask the user to show KakaoTalk; use `--allow-activate`
+  only if they agree to KakaoTalk coming to the front.
+- `KAKAOTALK_IN_USE` (exit status 75): the user is using KakaoTalk. Tell them and retry
+  later, not right away.
+- `OPEN_CHAT_LIST`: the row is a 1:1 open chat that opens a list of conversations, which
+  kktcli cannot read. Report it; do not try other ways to open it.
 
 When the user wants no UI change at all, add `--background-safe`; it only reads a chat
 window that is already open and fails otherwise:
