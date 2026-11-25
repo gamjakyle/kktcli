@@ -105,7 +105,8 @@ kktcli details:
 - `chats`: 6.8 s for 182 rows, titles and unread flags 182/182 correct.
 - Scrollback: 200 messages with dates in 17 s.
 - Recovery: a visible search was restored (취소, then 검색); a closed main window was
-  reopened through **카카오톡 열기** (this brings KakaoTalk to the front); a missing
+  reopened through **카카오톡 열기** (this brings KakaoTalk to the front, so it is now pressed
+  only when KakaoTalk is already in front or with `--allow-activate`); a missing
   room returns `CHAT_NOT_IN_LIST`; bad arguments return JSON with exit status 64. The
   hidden-filter state (no search field, filtered list) could not be reproduced live and
   is **unverified**.
@@ -115,6 +116,25 @@ once and left the search box filled. Root cause for the team chats: kmsg's searc
 fallback searches for `팀채팅, <name>`, which KakaoTalk search never matches (0 results;
 1 result without the prefix), so when its row select + Enter step misses, team chats
 cannot recover. Row select + Enter itself worked 10/10 when the chat list had focus.
+
+Additional measurements (2026-11-25, same Mac and account):
+
+- Reading more: the latest 100 messages of 4 rooms (400 messages) took kktcli 43.6 s and
+  Codex Computer Use without a CLI 1,606.5 s (about 37x; one of the Codex rooms had human
+  input during the run). 374/400 messages (93.5%) paired up between the two results, and
+  every paired message had the same text, sender and time; the rest were messages that
+  arrived in between, messages cut at 500 characters, and system messages.
+- Long messages: all 9 messages cut at 500 characters (6 rooms) were fetched in full with
+  `--full-text`, and every window that opened was closed again.
+- 19 rows that open a list of 1:1 open-chat conversations: all reported `OPEN_CHAT_LIST`
+  (12 opened, checked and closed; the 7 with zero conversations were not opened). These 19
+  plus 2 ordinary rooms took 36 s in one batch run.
+- Working in another full-screen Space: `chats` and `read` stopped with
+  `MAIN_WINDOW_NOT_VISIBLE` in 0.7 s, pressed nothing and left the frontmost app alone. With
+  another app in front on the same desktop, `read` succeeded in 2.3 s and the frontmost app
+  stayed in front.
+- The in-use guard (`KAKAOTALK_IN_USE`) is covered by unit tests only; it has not been
+  checked live yet.
 
 Caveats: one Mac, one account, n=20 rooms. The reference read used for accuracy was
 produced by an Accessibility reader, the same data source as kktcli, which may favor
