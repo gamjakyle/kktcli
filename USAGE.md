@@ -209,12 +209,12 @@ A chat name and `--chat-id` are mutually exclusive.
 | `--trace-ax` | Print AX traversal and retry details. |
 | `-k`, `--keep-window` | Keep a chat window opened by the command. |
 | `--background-safe` | Read only an already exposed matching window without launching, activating, logging in, searching, opening, resizing, or closing UI. |
-| `--deep-recovery` | Enable deeper window recovery after the fast path fails. |
+| `--deep-recovery` | Enable deeper window recovery after the fast path fails; also lets `read` reopen a closed main window (activates KakaoTalk). |
 | `--layout MODE` | Use `preserve`, `left`, `right`, `split-left`, or `split-right`. Default: `preserve`. |
 | `--json` | Return one structured JSON document, also on failure. |
 | `--allow-unread` | Open the chat even if its chat-list row shows unread messages (sends read receipts). |
 | `--scrollback` / `--no-scrollback` | Load older messages when fewer than `--limit` are loaded. On by default; opt-in under `--background-safe`. |
-| `--scrollback-timeout SEC` | Time budget for loading older messages. Default: `4`. |
+| `--scrollback-timeout SEC` | Time budget for loading older messages. Default: `4`. Automatic scrollback also stops about 6.5 s after the command started. |
 | `--include-system` | Include system messages such as joins and notices. |
 | `--legacy-open` | Open chats the old way (search typing, row select + Enter, double-click). |
 
@@ -236,6 +236,11 @@ How a chat is opened:
 `--legacy-open` keeps the previous search/Enter based path. Every keystroke and
 click is posted only after verifying that KakaoTalk is the frontmost app;
 otherwise the command stops with `NOT_FRONTMOST`.
+
+With `--json`, stdout carries exactly one JSON document, including for argument
+errors (`INVALID_ARGUMENT`, exit status `64`) and failures (`"ok": false` with an
+`error.code`). Ctrl-C or `SIGTERM` after login stops early, still closes a window
+the command opened, and prints what was read with `meta.interrupted: true`.
 
 `--background-safe` is suitable for automation that must not disturb foreground
 work, but it fails unless the matching chat window is already exposed.
