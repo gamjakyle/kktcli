@@ -438,7 +438,7 @@ struct ReadCommand: ParsableCommand {
             }
             throw ReadFailure(
                 code: "UNREAD_UNVERIFIED",
-                message: "'\(target.label)' was not found in the chat list, so its unread state cannot be checked before the legacy path opens it.",
+                message: "'\(target.label)' is missing from the chat list, so its unread state cannot be checked before the legacy path opens it.",
                 hint: "Pass --allow-unread to open it anyway.",
                 exitCode: ReadFailure.refusedExitCode
             )
