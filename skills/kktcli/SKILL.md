@@ -18,10 +18,13 @@ Claude Code users can invoke this skill with `/kktcli`.
 - Treat chat names and messages as private. Everything you read is sent to the model
   provider as part of this conversation: read only what the task needs and return only
   what the user asked for.
-- **Unread rooms:** opening a room with unread messages sends read receipts. `read`
-  refuses such rooms (`UNREAD_REFUSED` or `UNREAD_UNVERIFIED`, exit status 3). Do not add
-  `--allow-unread` on your own; ask the user first and explain that the other participants
-  will see the messages as read.
+- **Unread rooms:** `read` opens a room with unread messages like any other, exactly as
+  opening it by hand, so the other participants get read receipts and see their messages
+  as read. `kktcli chats --json` shows `has_unread`, `unread_count` and the last-message
+  preview without opening anything; apart from that preview there is no way to read
+  unread messages without marking them read. If the user wants messages left unread,
+  read with `--skip-unread`: it stops with `UNREAD_REFUSED` (exit status 3) instead of
+  opening the room. Do not open unread rooms the user did not ask about.
 - `send` and `send-image` change external state. Run them only when the user explicitly
   asked or authorized sending that exact content to that exact chat.
 - A request to draft, rewrite, preview or prepare a message is not permission to send.
@@ -52,7 +55,7 @@ kktcli chats --json
 
 Match an exact title when possible and reuse its `chat_id`. If several entries could
 match, show the minimal identifying choices and wait for the user to select one. Note
-`has_unread` before reading.
+`has_unread` before reading: reading that room will mark its messages read.
 
 ## 3. Read only what was requested
 
@@ -61,10 +64,14 @@ kktcli read --chat-id "<chat_id>" --limit 20 --json
 ```
 
 Adjust `--limit` to the request; add `--scrollback` when older messages are needed.
-Summarize by default and include raw content only when asked. The JSON always has an
-`ok` field; on failure use `error.code`:
+Summarize by default and include raw content only when asked. `meta.unread_before` is
+not null when the room had unread messages that this read opened; `meta.marked_read`
+says whether the chat-list badge disappeared afterwards. The JSON always has an `ok`
+field; on failure use `error.code`:
 
-- `UNREAD_REFUSED` / `UNREAD_UNVERIFIED`: ask the user (see Safety boundary).
+- `UNREAD_REFUSED` / `UNREAD_UNVERIFIED` (only with `--skip-unread`): the room was not
+  opened. Report that; read it without `--skip-unread` only if the user agrees to mark it
+  read.
 - `CHAT_NOT_IN_LIST`, `AMBIGUOUS_CHAT`, `UNKNOWN_CHAT_ID`: refresh with `kktcli chats
   --json` and confirm the chat with the user.
 
@@ -131,6 +138,8 @@ status and error code without exposing unrelated chat content.
 
 State which chat was targeted (title and shortened `chat_id`), whether the operation was
 a read, watch, dry run or actual send, how many messages were read or events observed,
-and anything (unread refusal, ambiguity, readiness) that stopped the requested action.
+whether a room with unread messages was opened (and so marked read), and anything
+(unread refusal with `--skip-unread`, ambiguity, readiness) that stopped the requested
+action.
 Never claim a message was delivered unless the actual send succeeded; a dry run proves
 only the preview.

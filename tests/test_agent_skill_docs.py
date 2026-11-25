@@ -31,6 +31,9 @@ class ProjectDocumentationTests(unittest.TestCase):
         self.assertIn("대량 발송에 쓰지 마세요", readme)
         self.assertIn("읽음 표시", readme)
         self.assertIn("UNREAD_REFUSED", readme)
+        self.assertIn("--skip-unread", readme)
+        self.assertIn("마지막 메시지 미리보기뿐입니다", readme)
+        self.assertNotIn("--allow-unread", readme)
         self.assertIn("AI 서비스", readme)
         self.assertIn("26.10.0", readme)
         for number in ("20/20", "17/20", "3.2초", "99.7%", "87.9%", "98.1%", "182/182"):
@@ -45,10 +48,27 @@ class ProjectDocumentationTests(unittest.TestCase):
         self.assertIn("has not officially permitted", readme)
         self.assertIn("Never mass-send", readme)
         self.assertIn("read receipts", readme)
+        self.assertIn("--skip-unread", readme)
+        self.assertIn("no way to see unread messages without marking them", readme)
+        self.assertNotIn("--allow-unread", readme)
         self.assertIn("AI service", readme)
         self.assertIn("Tested only on 26.10.0", readme)
         for number in ("20/20", "17/20", "3.2 s", "99.7%", "87.9%", "98.1%", "182/182"):
             self.assertIn(number, readme)
+
+    def test_usage_documents_unread_rooms_and_the_meta_fields(self) -> None:
+        usage = USAGE.read_text(encoding="utf-8")
+        for text in (
+            "#### Unread rooms",
+            "`--skip-unread`",
+            "`unread_before`",
+            "`unread_after`",
+            "`marked_read`",
+            '"unread_before": null',
+            "no way to read unread",
+        ):
+            self.assertIn(text, usage)
+        self.assertNotIn("unread_badge", usage)
 
     def test_docs_mention_kmsg_only_as_credit_or_comparison(self) -> None:
         usage = USAGE.read_text(encoding="utf-8")

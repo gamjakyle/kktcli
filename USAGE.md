@@ -127,9 +127,11 @@ kktcli chats [options]
 | `-k`, `--keep-window` | Keep a chat-list window that the command opened. |
 
 Each entry has a local synthetic `chat_id` (stored in `~/.kktcli/chat-registry.json`),
-the title from the row's title label, and `has_unread` / `unread_count` from its unread
-badge. `kktcli read` refuses to open rooms with `has_unread: true` unless
-`--allow-unread` is given.
+the title from the row's title label, `has_unread` / `unread_count` from its unread
+badge, and the last-message preview (`last_message`; in text output with `--verbose`).
+`chats` opens no room, so this preview is the only way kktcli can show an unread message
+without marking it read. `kktcli read` opens rooms with `has_unread: true` like any
+other, which marks them read (see [Unread rooms](#unread-rooms)).
 
 ### `read`
 
@@ -143,7 +145,8 @@ kktcli read --chat-id <chat-id> [options]
 | `--chat-id ID` | A `chat_id` from `kktcli chats`. Mutually exclusive with a chat name. |
 | `-l N`, `--limit N` | Maximum messages to return (1–50000). Default: `20`. |
 | `--json` | Exactly one JSON document on stdout, also on failure. |
-| `--allow-unread` | Open the room even if its chat-list row shows unread messages (sends read receipts). |
+| `--skip-unread` | Do not open a room whose chat-list row shows unread messages; fail with `UNREAD_REFUSED` / `UNREAD_UNVERIFIED` (exit status 3) instead, so no read receipts are sent. |
+| `--allow-unread` | Deprecated, no effect: unread rooms are opened by default. Kept so old scripts still run. |
 | `--scrollback` / `--no-scrollback` | Load older messages when fewer than `--limit` are loaded. Automatic by default; opt-in with `--background-safe`. |
 | `--scrollback-timeout SEC` | Time budget for loading older messages (0–600). Default: `4`. Automatic scrollback also stops about 6.5 s after the command started. |
 | `--include-system` | Include system messages (joins, notices). |
@@ -162,16 +165,35 @@ How a room is opened:
    registry's last known row is checked first and the scan stops at the first match;
    a name query prefers an exact title, then a unique partial match.
 3. The row is scrolled into view (scroll-bar value), its context menu is shown, and only
-   the item **채팅방 열기** (`openChatRoom:`) is pressed, after re-checking the title and
-   the unread badge. No keystrokes or clicks are posted; KakaoTalk can stay in the
-   background. Anything unexpected cancels the menu.
+   the item **채팅방 열기** (`openChatRoom:`) is pressed, after re-checking the title (and,
+   with `--skip-unread`, the unread badge). No keystrokes or clicks are posted; KakaoTalk
+   can stay in the background. Anything unexpected cancels the menu.
 4. After reading, the window is closed with its own close button (never Cmd+W). If it
    has none, it is left open and `meta.window` says why.
+5. If the row showed an unread badge, the row is read again (see below).
 
-Unread rooms: a row showing an unread badge (or a badge-like number, or a row that could
-not be read completely) is not opened, because opening it sends read receipts. `read`
-fails with `UNREAD_REFUSED` or `UNREAD_UNVERIFIED` and exit status `3` unless
-`--allow-unread` is given.
+#### Unread rooms
+
+A room whose chat-list row shows an unread badge is opened like any other, exactly as if
+you opened it by hand, so the other participants get read receipts. `read --json`
+reports the badge in `meta`:
+
+| Field | Meaning |
+|---|---|
+| `unread_before` | Badge seen on the row right before the room was opened (for example `"안읽음 3"`); `null` when there was none, when the window was already open, or (`--legacy-open`) when the row was not found. |
+| `unread_after` | Badge on the same row after the window was closed (with `--keep-window`, after reading); `null` when there is none or the row was not checked. |
+| `marked_read` | `true` if the badge seen before is gone, `false` if a badge is still shown, `null` if there was no badge before or the row could not be checked again. |
+
+While the badge is still shown the row is re-read for up to 1.5 s (less when the
+automatic time budget is nearly used), because KakaoTalk may clear it a moment after the
+window closes. The text output prints the same information as a note on stderr.
+
+`--skip-unread` leaves such rooms unopened: a row showing an unread badge (or a
+badge-like number, or a row that could not be read completely) is not opened, and `read`
+fails with `UNREAD_REFUSED` or `UNREAD_UNVERIFIED` and exit status `3`. Without
+`--skip-unread` a badge that cannot be read does not block the read. Apart from the
+last-message preview in `kktcli chats`, kktcli currently has no way to read unread
+messages without marking them read. `--allow-unread` is still accepted and has no effect.
 
 Recovery, only when the wanted row is missing:
 
@@ -281,7 +303,7 @@ Each tool call runs the same `kktcli` binary as a subprocess.
 
 | Tool | Purpose |
 |---|---|
-| `kktcli_read` | Read by `chat` or `chat_id`. Options: `limit` (1–500), `allow_unread`, `scrollback` (true/false; omit for automatic), `scrollback_timeout` (seconds), `include_system`, `background_safe`, `keep_window`, `layout`, `deep_recovery`, `trace_ax`. |
+| `kktcli_read` | Read by `chat` or `chat_id`. Options: `limit` (1–500), `skip_unread` (default `false`; `allow_unread` is accepted and ignored), `scrollback` (true/false; omit for automatic), `scrollback_timeout` (seconds), `include_system`, `background_safe`, `keep_window`, `layout`, `deep_recovery`, `trace_ax`. |
 | `kktcli_send` | Send a text message by chat name. |
 | `kktcli_send_image` | Send a local image by chat name. |
 
@@ -364,12 +386,14 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
     "interrupted": false,
     "list_recovery": null,
     "main_window": null,
+    "marked_read": null,
     "opened_via": "chat_list_menu",
     "row_title": "홍길동",
     "rows_read": 84,
     "rows_total": 84,
     "scrollback": null,
-    "unread_badge": null,
+    "unread_after": null,
+    "unread_before": null,
     "window": "closed",
     "window_detail": null
   },
@@ -380,19 +404,23 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
 `chat` is the window title; `meta.row_title` is the chat-list title, which differs for
 team chats (`팀채팅, <name>` opens a window titled `<name>`). `meta.opened_via` is
 `existing_window`, `chat_list_menu`, `legacy_chat_list` or `legacy_search`;
-`meta.window` is `untouched`, `closed`, `kept_open` or `left_open`.
+`meta.window` is `untouched`, `closed`, `kept_open` or `left_open`. `meta.unread_before`,
+`meta.unread_after` and `meta.marked_read` are described under
+[Unread rooms](#unread-rooms).
 
 ### Errors
+
+`kktcli read 가족 --skip-unread --json` for a room with unread messages:
 
 ```json
 {
   "chat": "가족",
   "chat_id": null,
-  "details": { "unread_badge": "안읽음 2" },
+  "details": { "unread_before": "안읽음 2" },
   "error": {
     "code": "UNREAD_REFUSED",
-    "hint": "Pass --allow-unread to open it anyway.",
-    "message": "'가족' shows unread messages (안읽음 2); opening it would send read receipts."
+    "hint": "Run without --skip-unread to open it; that sends read receipts like opening it by hand.",
+    "message": "'가족' shows unread messages (안읽음 2); --skip-unread does not open it because that would send read receipts."
   },
   "ok": false
 }
@@ -403,8 +431,8 @@ team chats (`팀채팅, <name>` opens a window titled `<name>`). `meta.opened_vi
 | Code | Exit | Meaning |
 |---|---:|---|
 | `INVALID_ARGUMENT` | 64 | Bad or conflicting arguments (also argument parse errors with `--json`). |
-| `UNREAD_REFUSED` | 3 | The row shows unread messages; not opened. |
-| `UNREAD_UNVERIFIED` | 3 | The row could not be read completely, or the legacy path cannot check it; not opened. |
+| `UNREAD_REFUSED` | 3 | Only with `--skip-unread`: the row shows unread messages; not opened. |
+| `UNREAD_UNVERIFIED` | 3 | Only with `--skip-unread`: the row could not be read completely, or the legacy path could not find it; not opened. |
 | `UNKNOWN_CHAT_ID` | 1 | The `chat_id` is not in the registry; run `kktcli chats`. |
 | `CHAT_NOT_IN_LIST` | 1 | No chat-list row matches (after list recovery, if any). |
 | `AMBIGUOUS_CHAT` | 1 | Several rows match a partial name equally well. |
@@ -457,8 +485,10 @@ again.
 
 ### `UNREAD_REFUSED`
 
-The room has unread messages. Ask the user before passing `--allow-unread`, which sends
-read receipts. Reading the room in KakaoTalk yourself first also clears the badge.
+`--skip-unread` was given and the room has unread messages, so it was not opened. Run
+without `--skip-unread` to read it; that sends read receipts, as opening it by hand
+would. To see the newest message without marking anything read, use the `last_message`
+preview from `kktcli chats --json`.
 
 ### `CHAT_NOT_IN_LIST` or a wrong room
 

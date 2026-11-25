@@ -26,7 +26,7 @@ CLI commands (Sources/kktcli/Commands)
 | `Sources/kktcli/Commands/` | Argument parsing, permission and login checks, human or JSON output. |
 | `AXNodeReader` | One `AXUIElementCopyMultipleAttributeValues` call per element; depth-first flatten with node budgets; marks failed reads. |
 | `ChatListLocator` | Finds open chat windows, the main window ("Main Window") and its chat-list table; reads row titles from `_NS:40`; resolves `--chat-id` from the registry hint with early termination; reopens a closed main window via the **카카오톡 열기** menu item. |
-| `ChatRoomMenuOpener` | Scrolls the list with the scroll-bar value, shows the row's context menu (AXShowMenu) and presses only **채팅방 열기** (`openChatRoom:`) after re-checking title and unread badge; cancels anything else. |
+| `ChatRoomMenuOpener` | Scrolls the list with the scroll-bar value, shows the row's context menu (AXShowMenu) and presses only **채팅방 열기** (`openChatRoom:`) after re-checking the title (and, with `--skip-unread`, the unread badge); cancels anything else. Returns the badge seen right before the press. |
 | `ChatListRecoverer` | Restores a search-filtered chat list by pressing only **취소** inside the search field and the top-bar **검색** toggle. |
 | `StructuredTranscriptReader` | Locates the transcript (`_NS:32` scroll area), reads rows newest-first until the limit and its context are covered, loads older rows by setting the scroll bar to 0 and polling the row count, probes for an earlier date separator. |
 | `KakaoTalkInputGuard` | Checks, immediately before every posted key press or click, that KakaoTalk is frontmost (and owns the click point). |
@@ -42,13 +42,17 @@ CLI commands (Sources/kktcli/Commands)
 1. Resolve the target: a `chat_id` from the registry, or a name.
 2. If an open chat window has that title, read it in place.
 3. Otherwise make sure the main window exists (menu item **카카오톡 열기** if it is
-   closed), find the row in its chat list, and refuse it when it shows an unread badge.
+   closed) and find the row in its chat list. With `--skip-unread`, refuse it when it
+   shows an unread badge.
 4. If the row is missing, restore a filtered list once and scan again.
 5. Open the row through its context menu, wait for the window, wait until the
    transcript row count settles.
 6. Read and parse rows; optionally load older rows (scrollback) within a time budget.
-7. Close a window the command opened with its own close button and print one JSON
-   document (or text).
+7. Close a window the command opened with its own close button.
+8. If the row showed an unread badge, read the row again (for up to 1.5 s while the
+   badge is still shown).
+9. Print one JSON document (or text); its `meta` reports `unread_before`,
+   `unread_after` and `marked_read`.
 
 No step of this path posts keyboard or mouse events.
 
@@ -75,10 +79,18 @@ Every element kktcli presses is identified by role, identifier and title or desc
 `showFirstWindow:` / 카카오톡 열기, a window's close button) and re-verified right before
 the press. Context menus are cancelled rather than guessed at.
 
-### Unread rooms are not opened by default
+### Unread rooms are opened, like by hand
 
-Opening a room sends read receipts. Rows with an unread badge, a badge-like number, or
-an incomplete read are refused unless the caller passes `--allow-unread`.
+Active rooms almost always have unread messages, so refusing them made the most
+important rooms unreadable. `read` therefore opens a room with an unread badge just as a
+person would, which sends read receipts. `--skip-unread` keeps the old refusal (rows
+with an unread badge, a badge-like number, or an incomplete read are not opened;
+`UNREAD_REFUSED` / `UNREAD_UNVERIFIED`, exit status 3), and `--allow-unread` is a
+deprecated no-op. Whether KakaoTalk really marks a room read when it is opened in the
+background is reported, not assumed: the row's badge is read before opening and again
+after the window is closed (`unread_before`, `unread_after`, `marked_read`). Apart from
+the chat-list preview (`chats`), kktcli cannot show unread messages without marking them
+read.
 
 ### Pure logic is separated and tested
 

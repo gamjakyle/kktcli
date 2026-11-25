@@ -28,6 +28,7 @@ use `send` or `send-image` in tests.
 .build/debug/kktcli status --verbose
 .build/debug/kktcli chats --json --limit 20
 .build/debug/kktcli read --chat-id "<chat_id>" --limit 20 --json --trace-ax
+.build/debug/kktcli read --chat-id "<chat_id>" --limit 20 --json --skip-unread
 .build/debug/kktcli send "Name" "msg" --dry-run
 ```
 
@@ -67,6 +68,10 @@ Chat window (title = room name; team chats drop the "팀채팅, " row prefix):
 - The read path must not post keyboard or mouse events. Any code that posts them goes
   through `AXActionRunner`, which checks `KakaoTalkInputGuard` before every press.
 - Press only allowlisted elements and re-verify them right before the press.
+- `read` opens rooms with unread messages, which sends read receipts like opening them
+  by hand; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`, exit status 3) and
+  `--allow-unread` is a deprecated no-op. Keep `meta.unread_before`, `unread_after` and
+  `marked_read` truthful (null when not checked).
 - Keep `read --json` output to exactly one JSON document on stdout.
 - Version: `VERSION` holds `MAJOR.MINOR.PATCH`.
 

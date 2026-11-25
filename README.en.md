@@ -38,10 +38,12 @@ Please read this first.
 - **Never mass-send.** `send` and `send-image` remain for single messages the user
   explicitly asked for. Repeated sending to many rooms or people looks like spam and
   can get the account restricted.
-- **Unread rooms are refused by default.** Opening a room with unread messages sends
-  read receipts to the other participants, so `read` does not open a room whose
-  chat-list row shows an unread badge and stops with `UNREAD_REFUSED` (exit status 3).
-  It opens such rooms only with `--allow-unread`.
+- **Unread rooms are opened, and opening marks them read.** `read` opens a room with
+  unread messages just as a person opening it by hand would, so the other participants
+  get read receipts. To avoid that, pass `--skip-unread`: a room whose chat-list row
+  shows an unread badge is then not opened and `read` stops with `UNREAD_REFUSED` (exit
+  status 3). kktcli currently has no way to see unread messages without marking them
+  read, apart from the last-message preview that `chats` shows.
 - **Chat contents stay on this Mac.** kktcli contains no network code. If you pipe its
   output into an AI service (a coding agent, a chatbot), that content is transferred to
   that company, together with your chat partners' personal data. Read only what the
@@ -55,7 +57,7 @@ Please read this first.
 | Area | kmsg 1.260921.0 | kktcli 0.1.0 |
 |---|---|---|
 | Opening a room | Row select + Enter, typing into search, double-click (key and mouse events) | Presses only the row's context-menu item **채팅방 열기** through Accessibility; no keystrokes, works with KakaoTalk in the background |
-| Unread rooms | Opened, which sends read receipts | Refused by default (`UNREAD_REFUSED`); `--allow-unread` to open |
+| Unread rooms | Opened, which sends read receipts | Opened like by hand, which sends read receipts; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`); JSON reports the badge before and after (`unread_before`, `unread_after`, `marked_read`) |
 | `read --chat-id` | Rescans about 200 chat-list rows on every call | Starts at the registry's last known row and stops at the first match |
 | `chats` titles | Unread badge text could appear as the room title | Title read only from the title label (`_NS:40`); adds `has_unread` / `unread_count` |
 | Message parsing | `date` empty; unlabeled burst messages took the previous message's time | `date` from date separators, burst times inferred (`time_source`: `label` / `inferred`), sender carried forward, channel banners never attributed to `(me)` |
@@ -66,7 +68,7 @@ Please read this first.
 | List state recovery | None | Restores a search-filtered chat list and a closed main window by pressing only specific buttons / menu items |
 | Team chats | Could fail in the search fallback | Matches row title `팀채팅, <name>` with window title `<name>` |
 | Distribution | `update` command, Homebrew, release automation | Build from source; no network code; separate data directories |
-| MCP | `kmsg_*` tools | `kktcli_*` tools, `allow_unread` and scrollback options, read error codes passed through |
+| MCP | `kmsg_*` tools | `kktcli_*` tools, `skip_unread` and scrollback options, read error codes passed through |
 
 ## Measured results
 
@@ -142,9 +144,10 @@ opens it, reads it and closes it again. All commands and options are in
 ## Coding agent skill
 
 [`skills/kktcli`](skills/kktcli/SKILL.md) tells coding agents how to use kktcli safely
-(read first, respect unread rooms, send only on explicit request and after a dry run,
-once). For Claude Code, copy the folder to `~/.claude/skills/kktcli` and invoke it with
-`/kktcli`. For other agents, follow their skill installation instructions.
+(read first, say that opening an unread room marks it read, send only on explicit request
+and after a dry run, once). For Claude Code, copy the folder to `~/.claude/skills/kktcli`
+and invoke it with `/kktcli`. For other agents, follow their skill installation
+instructions.
 
 ## MCP server
 
@@ -153,8 +156,9 @@ kktcli mcp-server
 ```
 
 A stdio MCP server with the tools `kktcli_read`, `kktcli_send` and `kktcli_send_image`.
-`kktcli_read` accepts `allow_unread`, `scrollback` and `scrollback_timeout`, and on
-failure returns kktcli's own error code such as `UNREAD_REFUSED`. See
+`kktcli_read` accepts `skip_unread`, `scrollback` and `scrollback_timeout`, and on
+failure returns kktcli's own error code such as `UNREAD_REFUSED`. The old `allow_unread`
+option is still accepted and ignored. See
 [USAGE.md](USAGE.md#mcp-server) for a configuration example.
 
 ## Documentation

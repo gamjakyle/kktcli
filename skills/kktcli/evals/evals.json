@@ -14,13 +14,13 @@
     },
     {
       "id": 2,
-      "prompt": "고객지원 채팅방 최근 대화 좀 읽어줘.",
-      "expected_output": "The read fails with UNREAD_REFUSED because the room shows unread messages; the agent explains that opening it would send read receipts and asks before using --allow-unread.",
+      "prompt": "고객지원 채팅방 최근 대화 좀 봐줘. 읽음 표시는 남기지 말고.",
+      "expected_output": "The agent checks kktcli chats --json, reads with --skip-unread so a room with unread messages is not opened (UNREAD_REFUSED), and explains that apart from the chat-list preview the unread messages cannot be read without marking them read.",
       "files": [],
       "expectations": [
+        "Uses --skip-unread (or only the chats preview) so that no read receipts are sent",
         "Recognizes the UNREAD_REFUSED error code from the JSON output",
-        "Does not add --allow-unread without asking the user",
-        "Explains that opening the room sends read receipts to the other participants"
+        "Explains that reading the unread messages would mark them read and offers the last-message preview instead"
       ]
     },
     {

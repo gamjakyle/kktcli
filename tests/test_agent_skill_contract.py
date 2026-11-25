@@ -31,13 +31,17 @@ class AgentSkillContractTests(unittest.TestCase):
         self.assertIn('kktcli read --chat-id "<chat_id>" --limit 20 --json', skill)
         self.assertIn("--background-safe", skill)
 
-    def test_unread_rooms_need_the_users_consent(self) -> None:
+    def test_unread_rooms_are_read_with_receipts_unless_skipped(self) -> None:
         skill = SKILL_PATH.read_text(encoding="utf-8")
 
+        self.assertIn("--skip-unread", skill)
         self.assertIn("UNREAD_REFUSED", skill)
-        self.assertIn("--allow-unread", skill)
+        self.assertIn("meta.unread_before", skill)
+        self.assertIn("meta.marked_read", skill)
         self.assertRegex(skill, r"(?i)read receipts")
-        self.assertRegex(skill, r"(?i)ask the user")
+        self.assertRegex(skill, r"(?i)no way to read\s+unread messages without marking them read")
+        self.assertRegex(skill, r"(?i)do not open unread rooms the user did not ask about")
+        self.assertNotIn("--allow-unread", skill)
 
     def test_text_sending_requires_dry_run_and_explicit_authorization(self) -> None:
         skill = SKILL_PATH.read_text(encoding="utf-8")
@@ -71,6 +75,8 @@ class AgentSkillContractTests(unittest.TestCase):
         self.assertIn("이미지", prompts)
         expectations = "\n".join("\n".join(item["expectations"]) for item in payload["evals"])
         self.assertIn("UNREAD_REFUSED", expectations)
+        self.assertIn("--skip-unread", expectations)
+        self.assertNotIn("--allow-unread", expectations)
         for item in payload["evals"]:
             self.assertTrue(item["expected_output"])
             self.assertEqual(item["files"], [])

@@ -37,10 +37,11 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 - **대량 발송에 쓰지 마세요.** `send`, `send-image`는 남아 있지만 사용자가 직접
   요청한 한 건씩만 보내는 용도입니다. 여러 방·여러 사람에게 반복해서 보내는 데
   쓰면 스팸으로 보고 계정이 제한될 수 있습니다.
-- **안 읽은 방은 기본으로 열지 않습니다.** 안 읽은 메시지가 있는 방을 열면 상대에게
-  읽음 표시가 전달됩니다. 그래서 `read`는 채팅 목록에서 안읽음 표시가 보이는 방을
-  열지 않고 `UNREAD_REFUSED`(종료 상태 3)로 멈춥니다. `--allow-unread`를 줄 때만
-  엽니다.
+- **안 읽은 방도 열고, 열면 읽음 처리됩니다.** `read`는 안 읽은 메시지가 있는 방도
+  사람이 직접 열 때처럼 열기 때문에 상대에게 읽음 표시가 전달됩니다. 읽음 표시를
+  남기지 않으려면 `--skip-unread`를 주세요. 채팅 목록에 안읽음 표시가 보이는 방은 열지
+  않고 `UNREAD_REFUSED`(종료 상태 3)로 멈춥니다. 지금 kktcli로 안 읽은 메시지를 읽음
+  처리 없이 볼 수 있는 것은 `chats`가 보여 주는 마지막 메시지 미리보기뿐입니다.
 - **대화 내용은 이 Mac에 남습니다.** kktcli에는 네트워크 코드가 없습니다. 다만 출력을
   AI 서비스(코딩 에이전트, 챗봇 등)에 넘기면 그 내용이 해당 회사로 전송됩니다.
   대화 상대의 개인정보도 함께 넘어가므로 필요한 만큼만 읽어 주세요.
@@ -53,7 +54,7 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 | 영역 | kmsg 1.260921.0 | kktcli 0.1.0 |
 |---|---|---|
 | 방 열기 | 행 선택 + Enter, 검색창 입력, 더블클릭(키·마우스 이벤트) | 채팅 목록 행의 메뉴 항목 **채팅방 열기**만 손쉬운 사용 동작으로 누름. 키 입력 없음, 카카오톡이 뒤에 있어도 동작 |
-| 안 읽은 방 | 그대로 열어 읽음 표시 전달 | 기본 거부(`UNREAD_REFUSED`), `--allow-unread`로만 열기 |
+| 안 읽은 방 | 그대로 열어 읽음 표시 전달 | 사람이 열 때처럼 열어 읽음 표시 전달, `--skip-unread`면 열지 않음(`UNREAD_REFUSED`), JSON에 열기 전후 안읽음 표시(`unread_before`·`unread_after`·`marked_read`) |
 | `read --chat-id` | 호출마다 채팅 목록 약 200행 재스캔 | 레지스트리의 마지막 위치부터 찾고 일치하면 멈춤 |
 | `chats` 제목 | 안읽음 배지 문구가 방 제목으로 표시되는 경우 있음 | 제목 라벨(`_NS:40`)에서만 제목을 읽음, `has_unread`/`unread_count` 추가 |
 | 메시지 파싱 | `date`가 비고, 연속 메시지 시간이 앞 메시지 시간으로 채워짐 | 날짜 구분선으로 `date`, 연속 메시지 시간 추론(`time_source`: `label`/`inferred`), 보낸 사람 이어받기, 채널 배너를 `(me)`로 오인하지 않음 |
@@ -64,7 +65,7 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 | 목록 상태 복구 | 없음 | 검색어로 걸러진 채팅 목록, 닫힌 메인 창을 정해진 버튼·메뉴로만 복구 |
 | 팀채팅 | 검색 경로에서 실패할 수 있음 | 행 제목 `팀채팅, <이름>`과 창 제목 `<이름>`을 맞춰 처리 |
 | 배포 | `update` 명령, Homebrew, 릴리스 자동화 | 소스 빌드만, 네트워크 코드 없음, 데이터 폴더 분리 |
-| MCP | `kmsg_*` 도구 | `kktcli_*` 도구, `allow_unread`·스크롤백 옵션, 읽기 오류 코드 전달 |
+| MCP | `kmsg_*` 도구 | `kktcli_*` 도구, `skip_unread`·스크롤백 옵션, 읽기 오류 코드 전달 |
 
 ## 측정 결과
 
@@ -138,7 +139,8 @@ kktcli read "방 이름" --json --background-safe      # 이미 열린 창만 �
 ## 코딩 에이전트 스킬
 
 [`skills/kktcli`](skills/kktcli/SKILL.md)는 코딩 에이전트가 kktcli를 안전하게 쓰는
-절차입니다(읽기 우선, 안 읽은 방 존중, 보내기는 명시적 요청과 dry-run 뒤 한 번만).
+절차입니다(읽기 우선, 안 읽은 방을 열면 읽음 처리된다는 점 알리기, 보내기는 명시적
+요청과 dry-run 뒤 한 번만).
 Claude Code에서는 이 폴더를 `~/.claude/skills/kktcli`에 복사하면 `/kktcli`로 쓸 수
 있습니다. 다른 에이전트는 해당 에이전트의 스킬 설치 방법을 따르세요.
 
@@ -149,8 +151,9 @@ kktcli mcp-server
 ```
 
 stdio MCP 서버로 `kktcli_read`, `kktcli_send`, `kktcli_send_image` 도구를 제공합니다.
-`kktcli_read`는 `allow_unread`, `scrollback`, `scrollback_timeout` 옵션을 받고, 실패하면
-`UNREAD_REFUSED` 같은 kktcli 오류 코드를 그대로 돌려줍니다. 설정 예시는
+`kktcli_read`는 `skip_unread`, `scrollback`, `scrollback_timeout` 옵션을 받고, 실패하면
+`UNREAD_REFUSED` 같은 kktcli 오류 코드를 그대로 돌려줍니다. 예전 옵션 `allow_unread`는
+받기만 하고 무시합니다. 설정 예시는
 [USAGE.md](USAGE.md#mcp-server)에 있습니다.
 
 ## 문서
