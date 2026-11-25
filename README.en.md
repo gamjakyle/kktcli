@@ -16,9 +16,22 @@ Please read this first.
 
 - **Not affiliated with Kakao.** kktcli is not made or endorsed by Kakao Corp., and
   there is no official permission to automate KakaoTalk.
-- **Accounts can be restricted.** KakaoTalk's terms and operating policy may restrict
-  automated use, and accounts judged to violate them can be suspended temporarily or
-  permanently. You use kktcli at your own risk.
+- **The risk depends on how a tool connects and how you use it.**
+  - kktcli only operates the official KakaoTalk app through macOS Accessibility; it never
+    connects to Kakao's servers or to the private LOCO protocol.
+  - Reports of permanent bans concern unofficial clients that speak LOCO directly; the kmsg
+    developer notes ([ARCHITECTURE.md](https://github.com/channprj/kmsg/blob/main/ARCHITECTURE.md))
+    mention them too. These are unsourced reports, not figures published by Kakao.
+  - As of November 2026 we found no report of an account suspended for using an
+    Accessibility-based tool such as kmsg (GitHub issues and web search). Such tools are new
+    and have few users, so the absence of reports is not a guarantee.
+  - Whatever the method, sending many messages or creating many chat rooms in a short time
+    can trigger Kakao's automatic restrictions
+    ([KakaoTalk operating policy – automatic detection](https://talksafety.kakao.com/measure/detection)).
+  - Kakao has not officially permitted this kind of automation, and its operating policy
+    allows restricting use "by methods KakaoTalk does not permit"
+    ([operating policy](https://talksafety.kakao.com/policy/stability/abnormalusage)).
+    You use kktcli at your own risk.
 - **Read-first design.** `chats` and `read` post no synthetic keystrokes or clicks; they
   read the screen through Accessibility and press only specific buttons and menu
   items. They work while KakaoTalk stays in the background.
