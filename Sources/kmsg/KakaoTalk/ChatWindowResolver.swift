@@ -47,6 +47,7 @@ private enum ChatWindowFailureCode: String {
     case inputNotReflected = "INPUT_NOT_REFLECTED"
     case windowNotReady = "WINDOW_NOT_READY"
     case searchMiss = "SEARCH_MISS"
+    case notFrontmost = "NOT_FRONTMOST"
 }
 
 private struct SearchScanProfile {
@@ -137,12 +138,14 @@ struct ChatWindowResolver {
             return ChatWindowResolution(window: existingWindow, method: .existingWindow)
         }
 
+        let inputBlocksBefore = KakaoTalkInputGuard.shared.blockedCount
         if let chatListWindow = kakao.chatListWindow,
            let chatWindow = openChatListRow(chatID: chatID, query: query, in: chatListWindow, fallbackWindow: usableWindow)
         {
             standardizeReadableWindow(chatWindow, label: "opened chat window")
             return ChatWindowResolution(window: chatWindow, method: .openedViaChatList)
         }
+        try throwIfInputRefused(since: inputBlocksBefore)
 
         runner.log("chat_id: falling back to search for '\(query)'")
         let searchWindow = selectSearchWindow(fallback: usableWindow)
@@ -285,6 +288,7 @@ struct ChatWindowResolver {
 
     private func openChatViaSearch(query: String, in rootWindow: UIElement, fallbackWindow: UIElement) throws -> UIElement {
         runner.log("search: locating search field")
+        let inputBlocksBefore = KakaoTalkInputGuard.shared.blockedCount
 
         guard let searchField = locateSearchField(in: rootWindow) else {
             throw KakaoTalkError.elementNotFound("[\(ChatWindowFailureCode.searchMiss.rawValue)] Search field not found")
@@ -301,6 +305,7 @@ struct ChatWindowResolver {
             runner.typeTextWithVerification(query, on: searchField, label: "search field input", attempts: 2)
 
         guard searchInputReady else {
+            try throwIfInputRefused(since: inputBlocksBefore)
             runner.pressEscape()
             throw KakaoTalkError.actionFailed("[\(ChatWindowFailureCode.inputNotReflected.rawValue)] Search keyword was not entered")
         }
@@ -318,6 +323,7 @@ struct ChatWindowResolver {
             resolveOpenedChatWindowFast(query: query) != nil
         }
         guard openTriggered else {
+            try throwIfInputRefused(since: inputBlocksBefore)
             runner.pressEscape()
             throw KakaoTalkError.actionFailed("[\(ChatWindowFailureCode.searchMiss.rawValue)] Could not open matched search result")
         }
@@ -326,6 +332,7 @@ struct ChatWindowResolver {
             return window
         }
 
+        try throwIfInputRefused(since: inputBlocksBefore)
         throw KakaoTalkError.windowNotFound("[\(ChatWindowFailureCode.windowNotReady.rawValue)] Chat window for '\(query)' did not open")
     }
 
@@ -370,13 +377,11 @@ struct ChatWindowResolver {
 
         let selected = trySelectSearchResult(row, label: "chat list row")
         if !selected, let parent = row.parent, trySelectSearchResult(parent, label: "chat list row.parent") {
-            runner.pressEnterKey()
-            return true
+            return runner.pressEnterKey()
         }
 
         if selected {
-            runner.pressEnterKey()
-            return true
+            return runner.pressEnterKey()
         }
 
         return false
@@ -907,10 +912,15 @@ struct ChatWindowResolver {
         // Use the point captured at scan time; the AX handle is often stale by now.
         if let clickPoint = candidate.clickPoint ?? clickableCenter(of: result) {
             kakao.activate()
-            runner.mouseDoubleClick(at: clickPoint, label: "search result")
-            didTriggerAction = true
-            if runner.waitUntil(label: "search open confirm (double-click)", timeout: 0.6, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
-                return true
+            if runner.mouseDoubleClick(at: clickPoint, label: "search result") {
+                didTriggerAction = true
+                if runner.waitUntil(label: "search open confirm (double-click)", timeout: 0.6, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
+                    return true
+                }
+            } else if !KakaoTalkInputGuard.shared.isKakaoTalkFrontmost() {
+                // Every remaining fallback posts keystrokes, which the guard would refuse too.
+                runner.log("search: KakaoTalk is not frontmost; stopping before keyboard fallbacks")
+                return false
             }
         } else {
             runner.log("search: double-click skipped (no clickable frame)")
@@ -933,10 +943,11 @@ struct ChatWindowResolver {
             kakao.activate()
             if runner.focusWithVerification(searchField, label: "search field confirm", attempts: 1) {
                 runner.log("search: fallback confirm via Enter")
-                runner.pressEnterKey()
-                didTriggerAction = true
-                if runner.waitUntil(label: "search open confirm", timeout: 0.18, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
-                    return true
+                if runner.pressEnterKey() {
+                    didTriggerAction = true
+                    if runner.waitUntil(label: "search open confirm", timeout: 0.18, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
+                        return true
+                    }
                 }
             } else {
                 runner.log("search: fallback confirm skipped (search field focus failed)")
@@ -948,12 +959,14 @@ struct ChatWindowResolver {
         kakao.activate()
         if searchField.isFocused || runner.focusWithVerification(searchField, label: "search field confirm", attempts: 1) {
             runner.log("search: fallback confirm via Down+Enter")
-            runner.pressDownArrowKey()
-            Thread.sleep(forTimeInterval: 0.03)
-            runner.pressEnterKey()
-            didTriggerAction = true
-            if runner.waitUntil(label: "search open confirm", timeout: 0.22, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
-                return true
+            if runner.pressDownArrowKey() {
+                Thread.sleep(forTimeInterval: 0.03)
+                if runner.pressEnterKey() {
+                    didTriggerAction = true
+                    if runner.waitUntil(label: "search open confirm", timeout: 0.22, pollInterval: 0.05, evaluateAfterTimeout: false, condition: opened) {
+                        return true
+                    }
+                }
             }
         } else {
             runner.log("search: Down+Enter skipped (search field focus unavailable)")
@@ -1004,6 +1017,17 @@ struct ChatWindowResolver {
     private func supportsAction(_ action: String, on element: UIElement) -> Bool {
         guard let actions = try? element.actionNames() else { return false }
         return actions.contains(action)
+    }
+
+    /// Turns a frontmost-guard refusal into an explicit failure instead of a later, misleading
+    /// "search miss" or "window not ready".
+    private func throwIfInputRefused(since baseline: Int) throws {
+        let inputGuard = KakaoTalkInputGuard.shared
+        guard inputGuard.blockedCount > baseline else { return }
+        throw KakaoTalkError.actionFailed(
+            "[\(ChatWindowFailureCode.notFrontmost.rawValue)] KakaoTalk is not the frontmost app " +
+            "(\(inputGuard.lastBlockReason ?? "unverified")); refused to post keyboard or mouse input"
+        )
     }
 
     private func findMatchingChatWindow(in windows: [UIElement], query: String) -> UIElement? {

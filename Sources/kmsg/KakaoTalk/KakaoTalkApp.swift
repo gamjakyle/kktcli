@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices.HIServices
 import Foundation
 
 public enum WindowRecoveryMode: Sendable {
@@ -115,6 +116,16 @@ public final class KakaoTalkApp: Sendable {
 
         // Use activateIgnoringOtherApps to reliably bring to foreground
         app.activate(options: [.activateIgnoringOtherApps])
+
+        // From a background process NSRunningApplication.activate can return true without
+        // bringing KakaoTalk forward; setting AXFrontmost on the application element does.
+        // Keystrokes are still only posted after KakaoTalkInputGuard verifies the result.
+        try? self.app.setAttribute(kAXFrontmostAttribute, value: kCFBooleanTrue)
+    }
+
+    /// KakaoTalk's own AXFrontmost attribute (false when it cannot be read).
+    public var isFrontmost: Bool {
+        app.attributeOptional(kAXFrontmostAttribute) ?? false
     }
 
     /// Activate KakaoTalk and wait for a usable window to be available

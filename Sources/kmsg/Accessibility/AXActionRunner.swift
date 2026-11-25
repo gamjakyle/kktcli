@@ -125,7 +125,10 @@ struct AXActionRunner {
     ) -> Bool {
         for attempt in 1...max(attempts, 1) {
             let before = element?.stringValue
-            typeText(text, perCharacterDelay: perCharacterDelay)
+            guard typeText(text, perCharacterDelay: perCharacterDelay) else {
+                log("\(label): typing refused because KakaoTalk is not frontmost")
+                return false
+            }
             guard let element else {
                 log("\(label): typed without verification target")
                 return true
@@ -157,7 +160,10 @@ struct AXActionRunner {
     ) -> Bool {
         for attempt in 1...max(attempts, 1) {
             let before = element?.stringValue ?? ""
-            pressKey(code: 36)
+            guard pressKey(code: 36, label: "Enter") else {
+                log("\(label): Enter refused because KakaoTalk is not frontmost")
+                return false
+            }
 
             guard let element else {
                 log("\(label): Enter sent without verification target")
@@ -200,89 +206,124 @@ struct AXActionRunner {
         return false
     }
 
-    func pressEscape() {
-        pressKey(code: 53)
+    // Every helper below posts CGEvents to the HID tap, which deliver to whatever app is
+    // frontmost. Each post is preceded by a live KakaoTalkInputGuard check; when KakaoTalk is
+    // not frontmost the event is not posted and the helper returns false.
+
+    @discardableResult
+    func pressEscape() -> Bool {
+        pressKey(code: 53, label: "Escape")
     }
 
-    func pressEnterKey() {
-        pressKey(code: 36)
+    @discardableResult
+    func pressEnterKey() -> Bool {
+        pressKey(code: 36, label: "Enter")
     }
 
-    func pressDownArrowKey() {
-        pressKey(code: 125)
+    @discardableResult
+    func pressDownArrowKey() -> Bool {
+        pressKey(code: 125, label: "Down Arrow")
     }
 
-    func pressTabKey() {
-        pressKey(code: 48)
+    @discardableResult
+    func pressTabKey() -> Bool {
+        pressKey(code: 48, label: "Tab")
     }
 
-    func pressShiftTabKey() {
-        pressKey(code: 48, flags: .maskShift)
+    @discardableResult
+    func pressShiftTabKey() -> Bool {
+        pressKey(code: 48, flags: .maskShift, label: "Shift-Tab")
     }
 
-    func pressSpaceKey() {
-        pressKey(code: 49)
+    @discardableResult
+    func pressSpaceKey() -> Bool {
+        pressKey(code: 49, label: "Space")
     }
 
-    func pressCommandW() {
-        pressKey(code: 13, flags: .maskCommand) // W
+    @discardableResult
+    func pressCommandW() -> Bool {
+        pressKey(code: 13, flags: .maskCommand, label: "Cmd-W") // W
     }
 
-    func pressCommandA() {
-        pressKey(code: 0, flags: .maskCommand) // A
+    @discardableResult
+    func pressCommandA() -> Bool {
+        pressKey(code: 0, flags: .maskCommand, label: "Cmd-A") // A
     }
 
-    func pressPaste() {
-        pressKey(code: 9, flags: .maskCommand) // V
+    @discardableResult
+    func pressPaste() -> Bool {
+        pressKey(code: 9, flags: .maskCommand, label: "Cmd-V") // V
     }
 
-    func typeTextDirect(_ text: String, label: String, perCharacterDelay: TimeInterval = 0.01) {
-        typeText(text, perCharacterDelay: perCharacterDelay)
-        log("\(label): typed without reflection check")
+    @discardableResult
+    func typeTextDirect(_ text: String, label: String, perCharacterDelay: TimeInterval = 0.01) -> Bool {
+        let typed = typeText(text, perCharacterDelay: perCharacterDelay)
+        log(typed ? "\(label): typed without reflection check" : "\(label): typing refused because KakaoTalk is not frontmost")
+        return typed
     }
 
-    private func typeText(_ text: String, perCharacterDelay: TimeInterval) {
+    /// Returns false (and stops) as soon as the guard refuses an event.
+    private func typeText(_ text: String, perCharacterDelay: TimeInterval) -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
+        let inputGuard = KakaoTalkInputGuard.shared
 
         for char in text {
             let unit = String(char)
+            // The label never includes the text itself: this path also types passwords.
+            guard inputGuard.permitKeyboardEvent("typed text") else { return false }
             if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {
                 var unicode = Array(unit.utf16)
                 down.keyboardSetUnicodeString(stringLength: unicode.count, unicodeString: &unicode)
                 down.post(tap: .cghidEventTap)
             }
+            guard inputGuard.permitKeyboardEvent("typed text") else { return false }
             if let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
                 up.post(tap: .cghidEventTap)
             }
             Thread.sleep(forTimeInterval: perCharacterDelay)
         }
+        return true
     }
 
-    private func pressKey(code: CGKeyCode, flags: CGEventFlags = []) {
+    @discardableResult
+    private func pressKey(code: CGKeyCode, flags: CGEventFlags = [], label: String) -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
+        let inputGuard = KakaoTalkInputGuard.shared
+        guard inputGuard.permitKeyboardEvent("\(label) key") else { return false }
         if let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true) {
             down.flags = flags
             down.post(tap: .cghidEventTap)
         }
+        guard inputGuard.permitKeyboardEvent("\(label) key") else { return false }
         if let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) {
             up.flags = flags
             up.post(tap: .cghidEventTap)
         }
+        return true
     }
 
     /// Post a left-button double-click at the given screen point.
     /// KakaoTalk's search/chat-list rows expose only AXShowDefaultUI/AXShowAlternateUI and
     /// ignore both AXPress and keyboard Enter, so a hardware-level double-click is the only
     /// reliable way to open them.
-    func mouseDoubleClick(at point: CGPoint, label: String) {
+    /// Returns false when the guard refused the click (KakaoTalk not frontmost, or the point is
+    /// not over a KakaoTalk element).
+    @discardableResult
+    func mouseDoubleClick(at point: CGPoint, label: String) -> Bool {
         log("\(label): double-click at (\(Int(point.x)),\(Int(point.y)))")
-        postMouseClicks(at: point, clickCount: 2)
+        let posted = postMouseClicks(at: point, clickCount: 2, label: label)
+        if !posted {
+            log("\(label): double-click refused because KakaoTalk is not frontmost or does not own the point")
+        }
+        return posted
     }
 
-    private func postMouseClicks(at point: CGPoint, clickCount: Int) {
+    private func postMouseClicks(at point: CGPoint, clickCount: Int, label: String) -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
         let restorePoint = CGEvent(source: nil)?.location
+        let inputGuard = KakaoTalkInputGuard.shared
 
+        guard inputGuard.permitPointerEvent("\(label) click", at: point) else { return false }
         CGEvent(
             mouseEventSource: source,
             mouseType: .mouseMoved,
@@ -291,11 +332,19 @@ struct AXActionRunner {
         )?.post(tap: .cghidEventTap)
         Thread.sleep(forTimeInterval: 0.02)
 
+        var completed = true
         for click in 1...max(clickCount, 1) {
+            guard inputGuard.permitPointerEvent("\(label) click", at: point) else {
+                completed = false
+                break
+            }
             if let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left) {
                 down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
                 down.post(tap: .cghidEventTap)
             }
+            // The matching button-up is always posted once the button-down went out: the window
+            // server routes it to the window that received the down, and skipping it would leave
+            // a stuck button (every later pointer move would become a drag).
             if let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) {
                 up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
                 up.post(tap: .cghidEventTap)
@@ -312,6 +361,7 @@ struct AXActionRunner {
                 mouseButton: .left
             )?.post(tap: .cghidEventTap)
         }
+        return completed
     }
 
     private func isInputReflected(expected: String, current: String?) -> Bool {

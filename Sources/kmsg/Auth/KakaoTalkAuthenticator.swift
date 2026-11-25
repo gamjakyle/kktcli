@@ -20,6 +20,7 @@ enum AuthenticationError: Error, LocalizedError {
     case lockScreenUnlockFailed
     case lockPasswordUnavailable
     case lockRejectedAccountPassword
+    case lockSubmitRefusedNotFrontmost
 
     var errorDescription: String? {
         switch self {
@@ -37,6 +38,8 @@ enum AuthenticationError: Error, LocalizedError {
             return "KakaoTalk is locked and no password is saved. Run `kmsg auth login --auto` in a terminal to unlock and save it."
         case .lockRejectedAccountPassword:
             return "KakaoTalk rejected the saved account password at the lock screen. Run `kmsg auth login` to save your current password, then retry."
+        case .lockSubmitRefusedNotFrontmost:
+            return "[NOT_FRONTMOST] KakaoTalk was not the frontmost app, so kmsg did not press Enter on the lock screen. Nothing was submitted and the saved password was kept; bring KakaoTalk to the front and retry."
         }
     }
 }
@@ -659,6 +662,7 @@ final class KakaoTalkAuthenticator {
             _ = setTextWithoutReflection(passcode.value, on: lock.passwordField, label: "auth lock passcode repair")
         }
 
+        var submitRefused = false
         if let confirmButton = lock.confirmButton,
            confirmButton.isEnabled,
            runner.clickWithRetry(confirmButton, label: "auth lock confirm button", attempts: 2)
@@ -666,7 +670,7 @@ final class KakaoTalkAuthenticator {
             runner.log("auth: lock confirm button clicked")
         } else {
             runner.log("auth: falling back to Enter for lock submit")
-            runner.pressEnterKey()
+            submitRefused = !runner.pressEnterKey()
         }
 
         // Single attempt on purpose: KakaoTalk signs the account out after repeated
@@ -679,6 +683,11 @@ final class KakaoTalkAuthenticator {
             // The lock field is a plain AXTextField that echoes its value over the
             // accessibility API, so a rejected password must not be left on screen.
             clearFieldBestEffort(lock.passwordField, label: "auth lock passcode clear")
+            // The frontmost guard refused the Enter key, so KakaoTalk never saw a submission
+            // and no attempt was spent: keep the stored passcode.
+            if submitRefused {
+                throw AuthenticationError.lockSubmitRefusedNotFrontmost
+            }
             // Drop the stored passcode so the next run does not replay a value KakaoTalk
             // just refused.
             try? store.clearLockPassword()

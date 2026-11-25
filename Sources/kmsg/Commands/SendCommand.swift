@@ -51,6 +51,7 @@ struct SendCommand: ParsableCommand {
         case inputNotReflected = "INPUT_NOT_REFLECTED"
         case enterNotEffective = "ENTER_NOT_EFFECTIVE"
         case forcedTypingFailed = "FORCED_TYPING_FAILED"
+        case notFrontmost = "NOT_FRONTMOST"
     }
 
     var recipient: String? {
@@ -262,10 +263,12 @@ struct SendCommand: ParsableCommand {
         kakao.activate()
         _ = tryRaiseWindow(window, runner: runner)
         Thread.sleep(forTimeInterval: 0.1)
+        let inputBlocksBefore = KakaoTalkInputGuard.shared.blockedCount
 
         guard let input = resolveMessageInputField(chatWindow: window, kakao: kakao, runner: runner) else {
             let forcedTyped = forceTypeIntoChatWindow(chatWindow: window, kakao: kakao, runner: runner)
             guard forcedTyped else {
+                try throwIfInputRefused(since: inputBlocksBefore)
                 throw KakaoTalkError.actionFailed("[\(SendFailureCode.forcedTypingFailed.rawValue)] Message input field not found and forced typing fallback failed")
             }
             print("✓ Message sent to \(targetDescription) (forced typing fallback)")
@@ -280,6 +283,7 @@ struct SendCommand: ParsableCommand {
             runner.setTextWithVerification(message, on: input, label: "message input", attempts: 1) ||
             runner.typeTextWithVerification(message, on: input, label: "message input", attempts: 2)
         guard inputReady else {
+            try throwIfInputRefused(since: inputBlocksBefore)
             throw KakaoTalkError.actionFailed("[\(SendFailureCode.inputNotReflected.rawValue)] Message input was not reflected")
         }
 
@@ -290,6 +294,10 @@ struct SendCommand: ParsableCommand {
             reflectionTimeout: 0.24,
             retryDelay: 0.06
         )
+        if !sendSucceeded, KakaoTalkInputGuard.shared.blockedCount > inputBlocksBefore {
+            clearUnsentMessage(in: input, runner: runner)
+            try throwIfInputRefused(since: inputBlocksBefore)
+        }
         if !sendSucceeded {
             runner.log("message input: quick retry after enter miss")
             _ = runner.focusWithVerification(input, label: "message input retry", attempts: 1)
@@ -302,6 +310,10 @@ struct SendCommand: ParsableCommand {
             )
         }
         guard sendSucceeded else {
+            if KakaoTalkInputGuard.shared.blockedCount > inputBlocksBefore {
+                clearUnsentMessage(in: input, runner: runner)
+                try throwIfInputRefused(since: inputBlocksBefore)
+            }
             invalidateCachedSlots([.messageInput], runner: runner)
             throw KakaoTalkError.actionFailed("[\(SendFailureCode.enterNotEffective.rawValue)] Enter key had no visible effect")
         }
@@ -473,10 +485,32 @@ struct SendCommand: ParsableCommand {
 
         _ = runner.focusWithVerification(chatWindow, label: "chat window fallback", attempts: 1)
         runner.log("fallback: typing into active chat window")
-        _ = runner.typeTextWithVerification(message, on: nil, label: "forced typing", attempts: 1)
-        runner.pressEnterKey()
+        guard runner.typeTextWithVerification(message, on: nil, label: "forced typing", attempts: 1),
+              runner.pressEnterKey()
+        else {
+            return false
+        }
         Thread.sleep(forTimeInterval: 0.08)
         return true
+    }
+
+    /// The frontmost guard refused the Enter key, so the text set via AX is still sitting in
+    /// the input field. Clear it (AX only) so it cannot be sent by a later, unrelated Enter.
+    private func clearUnsentMessage(in input: UIElement, runner: AXActionRunner) {
+        if runner.setTextWithVerification("", on: input, label: "message input clear after refusal", attempts: 1) {
+            runner.log("send: cleared the unsent message from the input field")
+        } else {
+            runner.log("send: could not clear the unsent message from the input field")
+        }
+    }
+
+    private func throwIfInputRefused(since baseline: Int) throws {
+        let inputGuard = KakaoTalkInputGuard.shared
+        guard inputGuard.blockedCount > baseline else { return }
+        throw KakaoTalkError.actionFailed(
+            "[\(SendFailureCode.notFrontmost.rawValue)] KakaoTalk is not the frontmost app " +
+            "(\(inputGuard.lastBlockReason ?? "unverified")); keystrokes were not posted and the message was not sent"
+        )
     }
 
     private func tryRaiseWindow(_ window: UIElement, runner: AXActionRunner) -> Bool {

@@ -83,7 +83,12 @@ struct SendImageCommand: ParsableCommand {
         Thread.sleep(forTimeInterval: 0.3)
 
         // 3. Paste image
-        runner.pressPaste()
+        guard runner.pressPaste() else {
+            let reason = KakaoTalkInputGuard.shared.lastBlockReason ?? "unverified"
+            throw KakaoTalkError.actionFailed(
+                "[NOT_FRONTMOST] KakaoTalk is not the frontmost app (\(reason)); Cmd-V was not posted and the image was not sent"
+            )
+        }
         runner.log("Paste command sent")
 
         // 4. Confirmation sheet can be transient or skipped entirely depending on KakaoTalk state.
