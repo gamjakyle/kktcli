@@ -1,5 +1,6 @@
 .DS_Store
 /.build
+/.build-next/
 /Packages
 xcuserdata/
 DerivedData/
@@ -7,11 +8,5 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 .claude/settings.local.json
-video/node_modules/
-video/out/
-site/node_modules/
-site/dist/
-site/.react-router/
-site/build/
 __pycache__/
 *.py[cod]

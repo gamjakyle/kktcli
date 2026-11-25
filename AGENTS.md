@@ -1,79 +1,76 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for coding agents working in this repository (also read as CLAUDE.md).
 
-## Build Commands
-
-```bash
-swift build                    # Debug build
-swift build -c release         # Release build
-.build/debug/kmsg [command]    # Run debug build
-.build/release/kmsg [command]  # Run release build
-```
-
-## Testing
-
-Pure parsing and policy logic lives in `Sources/KmsgCore` and is unit tested without
-KakaoTalk or the Accessibility API:
+## Build
 
 ```bash
-make test-core   # swift test for KmsgCoreTests (adds Swift Testing paths under Command Line Tools)
+swift build                      # debug
+swift build -c release           # release
+.build/debug/kktcli --version    # 0.1.0 (based on kmsg 1.260921.0)
 ```
 
-Everything that drives KakaoTalk is tested manually:
+## Test
+
+Pure logic lives in `Sources/KktcliCore` and is unit tested without KakaoTalk or the
+Accessibility API; the Python tests check source-level contracts.
 
 ```bash
-.build/debug/kmsg status --verbose           # Check accessibility & app status
-.build/debug/kmsg inspect --depth 5          # Inspect UI hierarchy
-.build/debug/kmsg chats --verbose --limit 20 # List chats
-.build/debug/kmsg send "Name" "msg" --dry-run # Test send without sending
-.build/debug/kmsg read "Chat" --limit 50     # Read messages
+make test-core                                          # Swift Testing (KktcliCoreTests)
+python3 -m unittest discover -s tests -p "test_*.py"    # contract tests
 ```
 
-## Architecture
+Anything that drives KakaoTalk can only be tested by hand on a Mac with KakaoTalk and
+Accessibility permission. Do not run such commands unless the user asked for it; never
+use `send` or `send-image` in tests.
 
-```
-CLI Commands (Commands/*.swift)
-        ↓
-  KakaoTalkApp (High-level business logic)
-        ↓
-    UIElement (Accessibility API wrapper)
-        ↓
-macOS Accessibility APIs (AXUIElement)
-```
-
-**Key components:**
-
-- **UIElement** (`Accessibility/UIElement.swift`): Wrapper around `AXUIElement` with breadth-first search, attribute access, hierarchy traversal. Supports `limit` parameter for early termination.
-
-- **KakaoTalkApp** (`KakaoTalk/KakaoTalkApp.swift`): Process lifecycle, window management, auto-launch with timeout. Thread-safe via `Sendable`.
-
-- **Commands**: Each implements `ParsableCommand`. Handle CLI interaction, permission checks, delegate business logic to KakaoTalkApp.
-
-## KakaoTalk UI Structure
-
-```
-Main Window (id: Main Window):
-├── Navigation: id: friends, id: chatrooms, id: more
-├── Unread count: AXStaticText
-└── Content: AXScrollArea > AXTable > AXRow > AXCell
-
-Chat Window (title = chat name):
-├── Messages: AXScrollArea > AXTable > AXRow
-└── Input: AXTextArea or AXTextField
+```bash
+.build/debug/kktcli status --verbose
+.build/debug/kktcli chats --json --limit 20
+.build/debug/kktcli read --chat-id "<chat_id>" --limit 20 --json --trace-ax
+.build/debug/kktcli send "Name" "msg" --dry-run
 ```
 
-## Technical Notes
+## Layout
 
-- Bundle ID: `com.kakao.KakaoTalkMac`
-- Requires Accessibility permission (System Settings > Privacy & Security > Accessibility)
-- Keyboard input uses `CGEvent` for Korean text (Unicode support)
-- Search methods support `limit` for early termination - use to avoid full UI traversal
-- All classes interacting with accessibility APIs should be `Sendable`
-- For version bumps, release tags, or release automation changes, follow `VERSIONING.md`
+```
+Sources/kktcli/Commands       CLI commands (ArgumentParser)
+Sources/kktcli/KakaoTalk      chat list, opener, transcript reader, recovery, legacy resolver
+Sources/kktcli/Accessibility  AX wrappers, batched reads, input guard, permission
+Sources/KktcliCore            pure parsing / policy logic (unit tested)
+tests/KktcliCoreTests         Swift Testing unit tests
+tests/*.py                    contract tests
+skills/kktcli                 agent skill
+```
 
-## Commit Convention
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 
-Follow conventional commits: `feat(module):`, `fix(module):`, `perf(module):`, `docs:`, `chore:`
+## KakaoTalk for Mac 26.10 UI notes
 
-Example: `feat(send): add chat list search and auto-open functionality`
+```
+Main window (identifier "Main Window"):
+└── AXScrollArea > AXTable > AXRow > AXCell
+    _NS:40 title, Count Label member count, _NS:69 time, _NS:87/_NS:91 preview,
+    _NS:138 unread badge ("안읽음 N"); the cell supports AXShowMenu
+    (menu item openChatRoom: "채팅방 열기")
+
+Chat window (title = room name; team chats drop the "팀채팅, " row prefix):
+├── AXScrollArea _NS:32 > AXTable > AXRow (transcript)
+└── AXTextArea _NS:51 "메시지 입력"
+```
+
+## Rules
+
+- Bundle ID: `com.kakao.KakaoTalkMac`. Data lives in `~/.kktcli` and `~/.config/kktcli`;
+  never read or write `~/.kmsg` or `~/.config/kmsg`.
+- No network code in `Sources`.
+- The read path must not post keyboard or mouse events. Any code that posts them goes
+  through `AXActionRunner`, which checks `KakaoTalkInputGuard` before every press.
+- Press only allowlisted elements and re-verify them right before the press.
+- Keep `read --json` output to exactly one JSON document on stdout.
+- Version: `VERSION` holds `MAJOR.MINOR.PATCH`.
+
+## Commit convention
+
+Conventional commits: `feat(module):`, `fix(module):`, `perf(module):`, `docs:`,
+`chore:`; mark breaking changes with `!`.

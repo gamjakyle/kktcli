@@ -1,8 +1,8 @@
 interface:
-  display_name: "KMSG"
-  short_description: "Use KakaoTalk safely from a coding agent"
-  brand_color: "#FEE500"
-  default_prompt: "Use $kmsg to handle this KakaoTalk task safely."
+  display_name: "kktcli"
+  short_description: "Read KakaoTalk chats safely from a coding agent"
+  brand_color: "#4A5568"
+  default_prompt: "Use $kktcli to handle this KakaoTalk task safely."
 
 policy:
   allow_implicit_invocation: true

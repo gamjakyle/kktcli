@@ -1,189 +1,159 @@
-# kmsg — macOS용 카카오톡 CLI 및 MCP 서버
+# kktcli — macOS용 카카오톡 CLI
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Total downloads](https://img.shields.io/github/downloads/channprj/kmsg/total?label=downloads&logo=github)](https://github.com/channprj/kmsg/releases)
+[English](README.en.md) · [사용법](USAGE.md) · [구조](ARCHITECTURE.md)
 
-[프로젝트 홈페이지](https://channprj.github.io/kmsg/) · [English](README.en.md)
+`kktcli`(KaKaoTalk CLI)는 macOS용 카카오톡(KakaoTalk for Mac)을 터미널과 코딩
+에이전트에서 다루는 비공식 CLI입니다. 채팅 목록과 메시지를 **읽는 것**을 중심으로
+만들었습니다. macOS 손쉬운 사용(Accessibility) API로 화면에 보이는 카카오톡 앱을
+읽을 뿐, 카카오 서버나 비공개 프로토콜(LOCO)에는 접속하지 않습니다.
 
-<p><img src="assets/kmsg-logo.jpg" alt="kmsg logo" width="220" /></p>
+kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를 포크해
+고친 프로젝트입니다. 원작자 Park Hee Chan 님과 kmsg 기여자들께 감사드립니다.
+무엇이 달라졌는지는 아래 [kmsg와 달라진 점](#kmsg와-달라진-점)에 정리했습니다.
 
-`kmsg`는 macOS용 비공식 카카오톡 CLI이자 네이티브 MCP 서버입니다.
-macOS 손쉬운 사용 API로 메시지를 읽고, 감시하고, 전송하며 로컬 자동화와
-AI 에이전트를 위한 구조화된 출력을 제공합니다.
+## 안전과 정책
 
-> **Disclaimer**: `kmsg`는 Kakao Corp. 의 공식 도구가 아닙니다.
-> 사용자는 본인 계정/환경에서 관련 법규, 서비스 약관, 회사 보안 정책을 준수할 책임이 있습니다.
-> 이 도구 사용으로 발생할 수 있는 계정 제한, 오작동, 데이터 손실, 기타 손해에 대한 책임은 사용자에게 있습니다.
-> LOCO Protocol 이 아닌 AX 를 사용한 이유와 계정 제재 가능성에 대한 제 개인적인 판단은 [왜 KakaoTalk 의 LOCO Protocol 을 사용하지 않나요?](ARCHITECTURE.md#accessibility-instead-of-a-private-protocol) 항목을 참고해 주세요.
+먼저 읽어 주세요.
 
-## AX(Accessibility API)를 핵심으로 개발
+- **카카오와 무관합니다.** kktcli는 카카오(Kakao Corp.)가 만들거나 승인한 도구가
+  아니며, 카카오톡 자동화에 대한 공식 허가를 받지 않았습니다.
+- **계정이 제한될 수 있습니다.** 카카오톡 이용약관과 운영정책은 자동화된 이용을
+  제한할 수 있고, 위반으로 판단되면 계정이 일시 또는 영구 정지될 수 있습니다.
+  사용에 따른 책임은 사용자에게 있습니다.
+- **읽기 우선 설계입니다.** `chats`와 `read`는 키보드 입력이나 마우스 클릭을 만들어
+  보내지 않고, 손쉬운 사용 API로 화면을 읽고 정해진 버튼·메뉴 항목만 누릅니다.
+  카카오톡이 뒤에 있어도 동작합니다.
+- **대량 발송에 쓰지 마세요.** `send`, `send-image`는 남아 있지만 사용자가 직접
+  요청한 한 건씩만 보내는 용도입니다. 여러 방·여러 사람에게 반복해서 보내는 데
+  쓰면 스팸으로 보고 계정이 제한될 수 있습니다.
+- **안 읽은 방은 기본으로 열지 않습니다.** 안 읽은 메시지가 있는 방을 열면 상대에게
+  읽음 표시가 전달됩니다. 그래서 `read`는 채팅 목록에서 안읽음 표시가 보이는 방을
+  열지 않고 `UNREAD_REFUSED`(종료 상태 3)로 멈춥니다. `--allow-unread`를 줄 때만
+  엽니다.
+- **대화 내용은 이 Mac에 남습니다.** kktcli에는 네트워크 코드가 없습니다. 다만 출력을
+  AI 서비스(코딩 에이전트, 챗봇 등)에 넘기면 그 내용이 해당 회사로 전송됩니다.
+  대화 상대의 개인정보도 함께 넘어가므로 필요한 만큼만 읽어 주세요.
+- **저장 위치:** `~/.kktcli`(채팅 레지스트리, 화면 경로 캐시)와 `~/.config/kktcli`
+  (암호화한 로그인 정보, 암호화 키도 같은 Mac에 있음). 설치된 kmsg의 `~/.kmsg`,
+  `~/.config/kmsg`는 읽지도 쓰지도 않습니다.
 
-`kmsg`는 macOS의 공식 Accessibility API, 즉 AX를 핵심 자동화 계층으로
-사용해 개발되었습니다. Swift에서 `ApplicationServices`와 `AXUIElement`를
-직접 호출해 사용자가 보는 KakaoTalk 창, 채팅 목록, 메시지 영역, 입력창을
-탐색하고 제어합니다. 키보드와 마우스 입력이 필요한 동작은 `CGEvent`를
-사용합니다.
+## kmsg와 달라진 점
 
-```text
-CLI / MCP
-  → KakaoTalkApp
-  → UIElement
-  → AXUIElement
-  → macOS용 KakaoTalk
-```
+| 영역 | kmsg 1.260921.0 | kktcli 0.1.0 |
+|---|---|---|
+| 방 열기 | 행 선택 + Enter, 검색창 입력, 더블클릭(키·마우스 이벤트) | 채팅 목록 행의 메뉴 항목 **채팅방 열기**만 손쉬운 사용 동작으로 누름. 키 입력 없음, 카카오톡이 뒤에 있어도 동작 |
+| 안 읽은 방 | 그대로 열어 읽음 표시 전달 | 기본 거부(`UNREAD_REFUSED`), `--allow-unread`로만 열기 |
+| `read --chat-id` | 호출마다 채팅 목록 약 200행 재스캔 | 레지스트리의 마지막 위치부터 찾고 일치하면 멈춤 |
+| `chats` 제목 | 안읽음 배지 문구가 방 제목으로 표시되는 경우 있음 | 제목 라벨(`_NS:40`)에서만 제목을 읽음, `has_unread`/`unread_count` 추가 |
+| 메시지 파싱 | `date`가 비고, 연속 메시지 시간이 앞 메시지 시간으로 채워짐 | 날짜 구분선으로 `date`, 연속 메시지 시간 추론(`time_source`: `label`/`inferred`), 보낸 사람 이어받기, 채널 배너를 `(me)`로 오인하지 않음 |
+| 이전 메시지 | 처음 로드된 행만 | 스크롤백(`--scrollback`, 시간 제한 있음) |
+| 창 닫기 | 첫 번째 버튼을 누르거나 Cmd+W | 창의 닫기 버튼만 누름, 없으면 열어 두고 알림 |
+| 키 입력 경로 | 앞에 있는 앱 확인 없음 | 보내기·로그인 등 키 입력이 필요한 경로는 카카오톡이 맨 앞일 때만 입력 |
+| `--json` | 결과가 없거나 실패하면 일반 텍스트 | 항상 JSON 한 개(오류 코드·종료 상태 포함) |
+| 목록 상태 복구 | 없음 | 검색어로 걸러진 채팅 목록, 닫힌 메인 창을 정해진 버튼·메뉴로만 복구 |
+| 팀채팅 | 검색 경로에서 실패할 수 있음 | 행 제목 `팀채팅, <이름>`과 창 제목 `<이름>`을 맞춰 처리 |
+| 배포 | `update` 명령, Homebrew, 릴리스 자동화 | 소스 빌드만, 네트워크 코드 없음, 데이터 폴더 분리 |
+| MCP | `kmsg_*` 도구 | `kktcli_*` 도구, `allow_unread`·스크롤백 옵션, 읽기 오류 코드 전달 |
 
-- [`UIElement`](Sources/kmsg/Accessibility/UIElement.swift)는 AX 속성 조회,
-  계층 탐색, 값 설정, 액션 실행을 Swift 인터페이스로 감쌉니다.
-- [`AXActionRunner`](Sources/kmsg/Accessibility/AXActionRunner.swift)는
-  AX 액션과 `CGEvent` 기반 입력을 실행합니다.
-- [`AXPathCache`](Sources/kmsg/Accessibility/AXPathCache.swift)는 자주 쓰는
-  UI 경로를 캐시하고, KakaoTalk UI가 바뀌어 경로가 유효하지 않으면 다시
-  탐색할 수 있게 합니다.
+## 측정 결과
 
-이 구조는 `kmsg` 자체가 KakaoTalk 서버나 비공개 LOCO 프로토콜에 직접
-연결하지 않고, 사용자가 실제로 조작하는 앱 UI를 통해 동작한다는 뜻입니다.
-따라서 설치한 `kmsg` 바이너리에 macOS 손쉬운 사용 권한이 필요하며,
-KakaoTalk UI 구조가 바뀌면 일부 탐색 경로가 영향을 받을 수 있습니다.
-자세한 설계 배경과 제약은 [아키텍처 문서](ARCHITECTURE.md)를 참고하세요.
+조건: Mac 1대, KakaoTalk for Mac 26.10.0, 계정 1개, 방 20개, 방마다 최신 메시지
+20개. 세 도구 모두 같은 Codex 모델이 사용했습니다.
 
-## 데모
+| 항목 | kktcli 0.1.0 | kmsg 1.260921.0 | Codex Computer Use |
+|---|---|---|---|
+| 읽기에 성공한 방 | 20/20 | 17/20 | 20/20 |
+| 방 하나에 걸린 시간(중앙값) | 3.2초(2.4–9.9초) | 33초(그중 kmsg 실행 32초) | 59초 |
+| 메시지 재현율 | 99.7% | 87.9%(실패한 방 포함) | 98.1% |
+| 보낸 사람 정확도 | 100% | 97% | 99.7% |
+| 시간 표시가 있는 메시지의 시간 정확도 | 100% | 98% | 100% |
 
-https://github.com/user-attachments/assets/c620b2e3-7106-40fa-86d1-ed847e3b1a6f
+kktcli 세부 결과:
 
-## 실사용 후기
+- 합성 키보드·클릭 이벤트 0건, 카카오톡은 계속 뒤에 있었고, 연 창은 모두 닫기
+  버튼으로 닫혔습니다. 팀채팅, 나와의 채팅, 채널 방 4곳도 모두 읽었습니다.
+- `chats`: 182행에 6.8초, 제목과 안읽음 표시 182/182 정확.
+- 스크롤백: 날짜가 붙은 메시지 200개를 17초에 읽음.
+- 복구: 보이는 검색 상태 복원(취소 → 검색 순서로 누름), 닫힌 메인 창은
+  **카카오톡 열기** 메뉴로 다시 열림(이때 카카오톡이 앞으로 나옵니다), 없는 방은
+  `CHAT_NOT_IN_LIST`, 잘못된 인자는 JSON 오류와 종료 상태 64. 검색창이 숨은 채
+  필터만 남은 상태는 실측에서 재현하지 못해 **검증되지 않았습니다**.
 
-<a href="https://www.youtube.com/watch?v=_Pd1G33_R48&t=1020s"><img src="https://i.ytimg.com/vi/_Pd1G33_R48/maxresdefault.jpg" alt="실사용 후기: 헤르메스 에이전트 5개로 뉴스 큐레이션부터 주식 매매까지 자동화한 방법 전부 공개합니다" width="400" /></a>
+kmsg의 실패: 채널 방 2곳과 팀채팅 1곳에서 실패했고, 다른 팀채팅 1곳은 한 번 실패하며
+검색창에 검색어를 남겼습니다. 팀채팅이 실패하는 이유는 kmsg의 검색 보조 경로가
+`팀채팅, <이름>`으로 검색하는데, 카카오톡 검색은 이 접두어가 붙은 이름을 찾지
+못하기 때문입니다(0건, 접두어 없이 검색하면 1건). 그래서 행 선택 + Enter 단계가
+빗나가면 팀채팅은 복구되지 않습니다. 행 선택 + Enter 자체는 채팅 목록에 포커스가
+있을 때 10/10 성공했습니다.
 
-**Builder Josh:** [헤르메스 에이전트 5개로 뉴스 큐레이션부터 주식 매매까지 자동화한 방법 전부 공개합니다 (AI 엔지니어 샘 호트만님)](https://www.youtube.com/watch?v=_Pd1G33_R48&t=1020s) — 17:00부터 재생
+한계: Mac 1대·계정 1개·방 20개의 작은 표본입니다. 정확도의 기준(정답)은 손쉬운 사용
+API로 읽어 만든 것이라 kktcli와 데이터 출처가 같으므로, kktcli에 유리하게 나왔을 수
+있습니다.
 
-<a href="https://www.youtube.com/watch?v=xz5fA7OyvQ0"><img src="https://i.ytimg.com/vi/xz5fA7OyvQ0/maxresdefault.jpg" alt="실사용 후기: 나만의 Hermes 시스템 구축 방법" width="400" /></a>
-
-**샘 호트만:** [나만의 Hermes 시스템 구축 방법 (문제정의부터 구축까지, 해외 AI 인사이트 발굴하기)](https://www.youtube.com/watch?v=xz5fA7OyvQ0)
-
-## 주요 기능
-
-- 채팅 목록을 조회하고 재사용 가능한 로컬 `chat_id`를 생성합니다.
-- 최근 메시지를 읽거나 새 메시지를 실시간으로 감시합니다.
-- 화면에 표시되는 KakaoTalk UI를 제어해 텍스트와 이미지를 전송합니다.
-- 구조화된 JSON을 `stdout`으로 출력하고 AX 추적 로그는 `stderr`로 분리합니다.
-- 읽기, 텍스트 전송, 이미지 전송 도구를 제공하는 native stdio MCP 서버를 실행합니다.
-- background-safe 읽기, 창 레이아웃, 복구 모드, self-healing AX path cache를 지원합니다.
-
-## 요구사항
+## 요구 사항
 
 - macOS 13 이상
-- [macOS용 KakaoTalk](https://apps.apple.com/kr/app/kakaotalk/id869223134?mt=12)
-- 설치된 `kmsg` 바이너리에 대한 손쉬운 사용 권한
+- KakaoTalk for Mac. **26.10.0(빌드 2010)에서만 시험했습니다.** 다른 버전에서는
+  화면 구조가 달라 동작하지 않을 수 있습니다.
+- 실행하는 `kktcli` 바이너리에 손쉬운 사용 권한
+- 소스 빌드용 Swift 6 이상(Xcode 또는 Command Line Tools)
 
-## 설치
-
-Homebrew 설치를 권장합니다.
-
-```bash
-brew install channprj/tap/kmsg
-```
-
-이미 설치했다면 다음 명령으로 업데이트합니다.
+## 소스에서 빌드·설치
 
 ```bash
-kmsg update
+swift build -c release
+mkdir -p ~/.local/bin
+install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
+kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
+kktcli status      # 손쉬운 사용 권한, 카카오톡 실행·로그인 상태 확인
 ```
 
-`kmsg update`는 필요하면 Homebrew를 설치하고, 포뮬러를 설치하거나 업그레이드한
-뒤, 직접 설치한 바이너리를 Homebrew 명령으로 연결합니다.
-
-직접 다운로드와 소스 빌드 방법은 [USAGE.md](USAGE.md#installation)를 참고하세요.
+`~/.local/bin`이 `PATH`에 있어야 합니다. **시스템 설정 → 개인정보 보호 및 보안 →
+손쉬운 사용**에서 실행하는 바로 그 바이너리를 켜 주세요. 다시 빌드하거나 옮긴
+바이너리는 다시 추가해야 할 수 있습니다.
 
 ## 빠른 시작
 
 ```bash
-kmsg status
-kmsg chats
-kmsg read "채팅방 이름" --limit 20
-kmsg send "채팅방 이름" "안녕하세요" --dry-run
+kktcli chats --json --limit 30                    # 방 목록, chat_id, 안읽음 여부
+kktcli read --chat-id "<chat_id>" --limit 20 --json
+kktcli read "방 이름" --limit 200 --scrollback      # 이전 메시지까지
+kktcli read "방 이름" --json --background-safe      # 이미 열린 창만 읽기
 ```
 
-`kmsg status`는 손쉬운 사용 권한을 요청하고, 필요하면 KakaoTalk을 실행한
-뒤 로그인 상태를 확인합니다. 마지막 명령은 dry run이므로 실제 메시지를
-전송하지 않습니다.
+`read`는 이미 열린 창이 있으면 그 창을 읽고, 없으면 채팅 목록에서 방을 찾아 열고,
+다 읽은 뒤 닫습니다. 명령과 옵션은 [USAGE.md](USAGE.md)에 있습니다.
 
 ## 코딩 에이전트 스킬
 
-저장소에 포함된 `kmsg` 스킬을 설치하면 Claude Code와 Codex가 채팅방을
-구조화된 JSON으로 찾고, 안정적인 `chat_id`로 메시지를 읽고, 전송 전에
-dry-run을 수행하는 공통 워크플로우를 사용할 수 있습니다. 먼저 위의
-Homebrew 명령으로 `kmsg`를 설치한 다음 스킬을 전역 설치하세요.
+[`skills/kktcli`](skills/kktcli/SKILL.md)는 코딩 에이전트가 kktcli를 안전하게 쓰는
+절차입니다(읽기 우선, 안 읽은 방 존중, 보내기는 명시적 요청과 dry-run 뒤 한 번만).
+Claude Code에서는 이 폴더를 `~/.claude/skills/kktcli`에 복사하면 `/kktcli`로 쓸 수
+있습니다. 다른 에이전트는 해당 에이전트의 스킬 설치 방법을 따르세요.
+
+## MCP 서버
 
 ```bash
-npx skills add channprj/kmsg --skill kmsg --agent claude-code codex -g -y
+kktcli mcp-server
 ```
 
-호출 방법은 에이전트마다 다음과 같습니다.
+stdio MCP 서버로 `kktcli_read`, `kktcli_send`, `kktcli_send_image` 도구를 제공합니다.
+`kktcli_read`는 `allow_unread`, `scrollback`, `scrollback_timeout` 옵션을 받고, 실패하면
+`UNREAD_REFUSED` 같은 kktcli 오류 코드를 그대로 돌려줍니다. 설정 예시는
+[USAGE.md](USAGE.md#mcp-server)에 있습니다.
 
-| 에이전트 | 호출 |
-| --- | --- |
-| Claude Code | `/kmsg` |
-| Codex | `$kmsg` |
+## 문서
 
-```text
-/kmsg 출시 준비 채팅방의 최근 메시지 10개를 요약해줘
-$kmsg 출시 준비 채팅방에 '배포 완료했습니다.'라고 보내줘
-```
+- [USAGE.md](USAGE.md) — 명령, 옵션, JSON 형식, 오류 코드, 설정, 문제 해결
+- [ARCHITECTURE.md](ARCHITECTURE.md) — 구조와 설계 결정
 
-스킬은 텍스트 전송 전에 항상 dry-run으로 수신자와 내용을 확인합니다.
-사용자가 명시적으로 전송을 요청한 경우에만 실제 `send`를 한 번 실행하며,
-초안 작성이나 미리보기 요청은 전송하지 않습니다. `send-image`에는
-dry-run이 없으므로 명확한 수신자와 실제 이미지 전송 요청이 모두 있어야
-실행합니다. 설치 후 스킬이 보이지 않으면 에이전트 세션을 다시 시작하세요.
+## 감사의 말
 
-## 자세한 문서
-
-- [사용법](USAGE.md) — 설치, 명령, 설정, 예제, 문제 해결
-- [아키텍처](ARCHITECTURE.md) — 구성 요소, 데이터 흐름, 상태, 설계 결정
-- [OpenClaw 연동](docs/openclaw.md) — MCP 및 실시간 watch 연동
-- [버전 관리](VERSIONING.md) — 릴리즈 형식과 자동화
-- [영문 README](README.en.md) — 이 문서의 영문 버전
-
-## 자주 묻는 질문
-
-### kmsg는 무엇인가요?
-
-`kmsg`는 macOS용 비공식 오픈소스 카카오톡 CLI이자 네이티브 MCP
-서버입니다. 사용자, 스크립트, AI 에이전트가 명령줄에서 카카오톡
-메시지를 읽고, 감시하고, 전송할 수 있게 해줍니다.
-
-### kmsg는 카카오톡 공식 도구인가요?
-
-아닙니다. `kmsg`는 Kakao Corp.와 제휴하거나 Kakao Corp.의 보증을 받은
-도구가 아니며, 독립적으로 관리되는 오픈소스 프로젝트입니다.
-
-### 어떤 운영체제를 지원하나요?
-
-`kmsg`는 macOS 13 이상과 macOS용 KakaoTalk을 필요로 합니다. Windows,
-Linux, Android, iOS는 지원하지 않습니다.
-
-### kmsg는 카카오톡에 어떻게 접근하나요?
-
-Apple의 macOS 손쉬운 사용 API를 통해 화면에 표시되는 KakaoTalk
-애플리케이션을 제어합니다. KakaoTalk의 비공개 LOCO 프로토콜은 구현하지
-않습니다.
-
-### MCP 서버가 포함되어 있나요?
-
-네. 네이티브 `kmsg mcp-server` 명령은 MCP 호환 클라이언트와 AI
-에이전트에 읽기, 텍스트 전송, 이미지 전송 도구를 stdio로 제공합니다.
-
-### kmsg는 어떻게 설치하나요?
-
-`brew install channprj/tap/kmsg`를 실행해 Homebrew로 설치할 수 있습니다.
-직접 다운로드와 소스 빌드 방법은 [사용법](USAGE.md)에서 확인할 수 있습니다.
-
-## 영감
-
-이 프로젝트는 [steipete](https://github.com/steipete)와 그의
-[imsg](https://github.com/steipete/imsg), 그리고
-[OpenClaw](https://github.com/openclaw/openclaw)에서 큰 영감을 받았습니다.
+kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)에서 출발했습니다. kmsg는
+[steipete/imsg](https://github.com/steipete/imsg)와
+[OpenClaw](https://github.com/openclaw/openclaw)에서 영감을 받았습니다.
 
 ## 라이선스
 
-`kmsg`는 [MIT License](LICENSE)로 제공됩니다.
+[MIT 라이선스](LICENSE). 원본 kmsg 저작권 표시를 그대로 두고, 이 포크의 변경분에 대한
+저작권 표시를 추가했습니다.

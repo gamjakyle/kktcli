@@ -1,168 +1,110 @@
-# kmsg Usage
+# kktcli Usage
 
-This guide covers installation, first-run setup, every public CLI command,
-configuration, output formats, MCP operation, troubleshooting, and release
-maintenance.
+This guide covers installation, first-run setup, every command, output formats, the MCP
+server, configuration and troubleshooting. Read the safety and policy section of the
+[README](README.en.md#safety-and-policy) first.
 
 ## Installation
 
 ### Requirements
 
 - macOS 13 or later
-- KakaoTalk for macOS
-- Accessibility permission for the installed `kmsg` binary
-
-### Homebrew
-
-```bash
-brew install channprj/tap/kmsg
-```
-
-The tap publishes `kmsg` for the latest release and retains exact-version
-formulae for the ten most recent published releases.
-
-Update an existing installation with:
-
-```bash
-kmsg update
-```
-
-`kmsg update` installs Homebrew when it is missing, installs or upgrades the
-formula, and links a directly installed binary to the Homebrew-managed command.
-The plain Homebrew equivalent is `brew update` followed by `brew upgrade kmsg`.
-
-### Direct download
-
-The release workflow publishes a universal macOS binary named
-`kmsg-macos-universal`.
-
-```bash
-mkdir -p ~/.local/bin
-curl -fL \
-  https://github.com/channprj/kmsg/releases/latest/download/kmsg-macos-universal \
-  -o ~/.local/bin/kmsg
-chmod +x ~/.local/bin/kmsg
-```
-
-Ensure `~/.local/bin` is in `PATH`, then verify the binary:
-
-```bash
-kmsg --version
-```
-
-Run `kmsg update` later to move this binary onto the Homebrew-managed release.
+- KakaoTalk for Mac (tested only on 26.10.0, build 2010)
+- Accessibility permission for the `kktcli` binary you run
+- Swift 6 or later to build
 
 ### Build from source
 
-Source builds require Swift 6.
-
 ```bash
-git clone https://github.com/channprj/kmsg.git
-cd kmsg
 swift build -c release
-install -m 755 .build/release/kmsg ~/.local/bin/kmsg
+mkdir -p ~/.local/bin
+install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
+kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
 ```
+
+Make sure `~/.local/bin` is on `PATH`. kktcli has no self-update; rebuild from source to
+update. It keeps its own state (see [Local state](#local-state)) and never touches the
+files of an installed kmsg.
 
 ## Quick start
 
-Run the environment check first:
-
 ```bash
-kmsg status
+kktcli status
 ```
 
-macOS may open the Accessibility settings pane. Enable the binary you actually
-run, then retry `kmsg status`.
-
-List chats and read recent messages:
+macOS may open the Accessibility settings pane. Enable the binary you actually run,
+then retry `kktcli status`.
 
 ```bash
-kmsg chats
-kmsg read "Chat name" --limit 20
+kktcli chats --json --limit 30
+kktcli read --chat-id "<chat_id>" --limit 20
 ```
 
 Preview a send without changing KakaoTalk:
 
 ```bash
-kmsg send "Chat name" "Hello" --dry-run
+kktcli send "Chat name" "Hello" --dry-run
 ```
 
-After verifying the target and message, omit `--dry-run` to send.
+Only after the user explicitly asked for that exact message to that exact chat, omit
+`--dry-run` to send it once.
 
 ## Authentication
 
-Commands that require interactive KakaoTalk access automatically check the
-login state. If saved credentials are unavailable, `kmsg` prompts in the
-terminal and stores them locally.
-
-Enter fresh credentials explicitly:
+Commands that need KakaoTalk check the login state. If saved credentials are
+unavailable, kktcli prompts in the terminal and stores them locally.
 
 ```bash
-kmsg auth login
+kktcli auth login          # enter fresh credentials
+kktcli auth login --auto   # reuse stored credentials when available
 ```
 
-Reuse stored credentials when available:
-
-```bash
-kmsg auth login --auto
-```
-
-Add `--trace-ax` to print Accessibility traversal and retry diagnostics.
-
-The password is encrypted with AES-GCM. The credential document and encryption
-key are stored separately with owner-only filesystem permissions:
+The password is encrypted with AES-GCM; the credential document and the key are
+stored separately with owner-only permissions:
 
 ```text
-~/.config/kmsg/credentials.json
-~/.config/kmsg/credentials/primary.key
+~/.config/kktcli/credentials.json
+~/.config/kktcli/credentials/primary.key
 ```
 
 ### Lock mode
 
-When KakaoTalk's lock screen is showing, commands unlock it before continuing,
-then carry on with the original request.
+When KakaoTalk's lock screen is showing, commands unlock it before continuing. The
+passcode comes from what is stored: the passcode remembered from an earlier unlock,
+otherwise the account password saved by `kktcli auth login`; kktcli prompts only when
+neither is available. Only one unlock attempt is made per command, because KakaoTalk
+signs the account out after repeated wrong passcodes. Typing the passcode needs
+KakaoTalk in front; if it is not, nothing is submitted and the stored passcode is kept.
 
-The passcode comes from what is already stored: the passcode remembered from an
-earlier unlock, otherwise the account password saved by `kmsg auth login`. `kmsg`
-prompts only when neither is available, and remembers whatever worked.
-
-Only one unlock attempt is made per command, because KakaoTalk signs the account
-out after repeated wrong passcodes. A saved account password the lock screen
-refuses is not tried again — run `kmsg auth login` to save the current one.
-
-Callers without a terminal — `kmsg mcp-server`, `kmsg watch`, cron jobs — cannot
-prompt, so they depend on those stored credentials.
+Callers without a terminal (`kktcli mcp-server`, `kktcli watch`, cron) cannot prompt
+and depend on stored credentials.
 
 ## Command reference
 
-### Global behavior
+### Global
 
 ```bash
-kmsg
-kmsg --help
-kmsg --version
-kmsg -v
+kktcli
+kktcli --help
+kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
+kktcli -v
 ```
 
-Running `kmsg` without a subcommand runs `status`.
+Running `kktcli` without a subcommand runs `status`.
 
 ### `status`
 
 ```bash
-kmsg status [--verbose]
+kktcli status [--verbose]
 ```
 
-Checks Accessibility permission, launches KakaoTalk if needed, verifies
-authentication, and prints readiness information.
-
-| Option | Description |
-|---|---|
-| `--verbose` | Include window titles, indexes, positions, and sizes. |
+Checks Accessibility permission, launches KakaoTalk if needed, verifies the login, and
+prints readiness. `--verbose` lists window titles, positions and sizes.
 
 ### `auth login`
 
 ```bash
-kmsg auth login [--auto] [--trace-ax]
+kktcli auth login [--auto] [--trace-ax]
 ```
 
 | Option | Description |
@@ -170,371 +112,314 @@ kmsg auth login [--auto] [--trace-ax]
 | `--auto` | Use stored credentials when available; otherwise prompt and save. |
 | `--trace-ax` | Print AX traversal and retry details to `stderr`. |
 
-Without `--auto`, the command prompts for fresh credentials and replaces the
-stored values.
-
 ### `chats`
 
 ```bash
-kmsg chats [options]
+kktcli chats [options]
 ```
 
 | Option | Description |
 |---|---|
-| `-v`, `--verbose` | Include the last visible message preview. |
+| `-v`, `--verbose` | Include the last message preview. |
 | `-l N`, `--limit N` | Return at most `N` chats. Default: `20`. |
-| `--trace-ax` | Print AX traversal and retry details. |
-| `--json` | Return one structured JSON document. |
+| `--trace-ax` | Print AX traversal details. |
+| `--json` | Return one JSON document. |
 | `-k`, `--keep-window` | Keep a chat-list window that the command opened. |
 
-Each result includes a local synthetic `chat_id`. The registry is refreshed by
-running `kmsg chats` and stored at `~/.kmsg/chat-registry.json`. `has_unread` and
-`unread_count` reflect the row's unread badge; `kmsg read` refuses to open such
-rooms unless `--allow-unread` is given.
+Each entry has a local synthetic `chat_id` (stored in `~/.kktcli/chat-registry.json`),
+the title from the row's title label, and `has_unread` / `unread_count` from its unread
+badge. `kktcli read` refuses to open rooms with `has_unread: true` unless
+`--allow-unread` is given.
 
 ### `read`
 
 ```bash
-kmsg read <chat> [options]
-kmsg read --chat-id <chat-id> [options]
+kktcli read <chat> [options]
+kktcli read --chat-id <chat-id> [options]
 ```
-
-A chat name and `--chat-id` are mutually exclusive.
 
 | Option | Description |
 |---|---|
-| `--chat-id ID` | Resolve a synthetic ID produced by `kmsg chats`. |
-| `-l N`, `--limit N` | Maximum messages to return. Default: `20`. |
-| `--debug` | Show compact raw parsing information in text output. |
-| `--trace-ax` | Print AX traversal and retry details. |
-| `-k`, `--keep-window` | Keep a chat window opened by the command. |
-| `--background-safe` | Read only an already exposed matching window without launching, activating, logging in, searching, opening, resizing, or closing UI. |
-| `--deep-recovery` | Enable deeper window recovery after the fast path fails; also lets `read` reopen a closed main window (activates KakaoTalk). |
-| `--layout MODE` | Use `preserve`, `left`, `right`, `split-left`, or `split-right`. Default: `preserve`. |
-| `--json` | Return one structured JSON document, also on failure. |
-| `--allow-unread` | Open the chat even if its chat-list row shows unread messages (sends read receipts). |
-| `--scrollback` / `--no-scrollback` | Load older messages when fewer than `--limit` are loaded. On by default; opt-in under `--background-safe`. |
-| `--scrollback-timeout SEC` | Time budget for loading older messages. Default: `4`. Automatic scrollback also stops about 6.5 s after the command started. |
-| `--include-system` | Include system messages such as joins and notices. |
-| `--legacy-open` | Open chats the old way (search typing, row select + Enter, double-click). |
+| `--chat-id ID` | A `chat_id` from `kktcli chats`. Mutually exclusive with a chat name. |
+| `-l N`, `--limit N` | Maximum messages to return (1–50000). Default: `20`. |
+| `--json` | Exactly one JSON document on stdout, also on failure. |
+| `--allow-unread` | Open the room even if its chat-list row shows unread messages (sends read receipts). |
+| `--scrollback` / `--no-scrollback` | Load older messages when fewer than `--limit` are loaded. Automatic by default; opt-in with `--background-safe`. |
+| `--scrollback-timeout SEC` | Time budget for loading older messages (0–600). Default: `4`. Automatic scrollback also stops about 6.5 s after the command started. |
+| `--include-system` | Include system messages (joins, notices). |
+| `--background-safe` | Only read an already open chat window; never launch, activate, log in, open, resize or close anything. |
+| `-k`, `--keep-window` | Keep a chat window the command opened. |
+| `--layout MODE` | `preserve` (default), `left`, `right`, `split-left` or `split-right`. Non-default layouts activate and resize the window. |
+| `--deep-recovery` | Allow `open KakaoTalk.app` (activates KakaoTalk) when the main window cannot be reopened otherwise. |
+| `--legacy-open` | Open rooms the old way (search typing, row select + Enter, double-click). Input is posted only while KakaoTalk is frontmost. |
+| `--debug` | Compact per-message parsing details in text output. |
+| `--trace-ax` | Print AX details to `stderr`. |
 
-The name form supports partial matching. For repeated automation, use a
-`chat_id` after refreshing the registry with `kmsg chats`.
+How a room is opened:
 
-How a chat is opened:
+1. An open chat window with the room's title is read in place and left open.
+2. Otherwise the row is found in the main window's chat list. For `--chat-id` the
+   registry's last known row is checked first and the scan stops at the first match;
+   a name query prefers an exact title, then a unique partial match.
+3. The row is scrolled into view (scroll-bar value), its context menu is shown, and only
+   the item **채팅방 열기** (`openChatRoom:`) is pressed, after re-checking the title and
+   the unread badge. No keystrokes or clicks are posted; KakaoTalk can stay in the
+   background. Anything unexpected cancels the menu.
+4. After reading, the window is closed with its own close button (never Cmd+W). If it
+   has none, it is left open and `meta.window` says why.
 
-1. An already open chat window with the same title is read in place.
-2. Otherwise the row is found in the chat list (the registry's last position is
-   checked first for `--chat-id`, and the scan stops at the first match) and
-   opened through its context menu item **채팅방 열기** with Accessibility
-   actions only. No keystrokes or clicks are posted, so KakaoTalk can stay in the
-   background. The window is closed afterwards through its own close button.
-3. A row that shows an unread badge is not opened, because opening it would
-   send read receipts. The command fails with `UNREAD_REFUSED` (exit status `3`)
-   unless `--allow-unread` is given.
+Unread rooms: a row showing an unread badge (or a badge-like number, or a row that could
+not be read completely) is not opened, because opening it sends read receipts. `read`
+fails with `UNREAD_REFUSED` or `UNREAD_UNVERIFIED` and exit status `3` unless
+`--allow-unread` is given.
 
-When the row is missing because the chat list is still filtered by an earlier
-search (the search field is showing, or the list is suspiciously short), the
-full list is restored once by pressing only the **취소** button inside the
-search field and the top-bar **검색** toggle (for a hidden filter the toggle is
-pressed first to reveal the old query), and the list is scanned again. Nothing
-is typed and Enter is never sent. `meta.list_recovery` reports what was pressed.
+Recovery, only when the wanted row is missing:
 
-When KakaoTalk's main window is closed, it is reopened by pressing only the
-**카카오톡 열기** menu item (`showFirstWindow:`); `open KakaoTalk.app` is used
-only with `--deep-recovery`. `meta.main_window` reports it.
+- **Filtered chat list.** If a search field is showing, or the list is suspiciously short,
+  kktcli presses only the **취소** button inside the search field and the top-bar
+  **검색** toggle (for a hidden filter the toggle is pressed first to reveal the old
+  query), then scans once more. Nothing is typed and Enter is never sent.
+  `meta.list_recovery` lists what was pressed.
+- **Closed main window.** kktcli presses only KakaoTalk's menu item **카카오톡 열기**
+  (`showFirstWindow:`) and waits for the main window; this brings KakaoTalk to the front.
+  `open KakaoTalk.app` is used only with `--deep-recovery`. Reported as
+  `meta.main_window`.
 
-`--legacy-open` keeps the previous search/Enter based path. Every keystroke and
-click is posted only after verifying that KakaoTalk is the frontmost app;
-otherwise the command stops with `NOT_FRONTMOST`.
+Message fields: `author` is `"(me)"` for your own messages and `null` when the sender
+cannot be established (system lines, banners); `side` is `me`, `other`, `unknown` or
+`system`. `date` comes from the transcript's date separators. KakaoTalk prints a time
+only on the last message of a same-author run, so earlier messages of the run take that
+time with `time_source: "inferred"`; messages with their own label have
+`time_source: "label"`.
 
-With `--json`, stdout carries exactly one JSON document, including for argument
-errors (`INVALID_ARGUMENT`, exit status `64`) and failures (`"ok": false` with an
-`error.code`). Ctrl-C or `SIGTERM` after login stops early, still closes a window
-the command opened, and prints what was read with `meta.interrupted: true`.
-
-`--background-safe` is suitable for automation that must not disturb foreground
-work, but it fails unless the matching chat window is already exposed.
-
-#### If `--background-safe` is missing
-
-The CLI flag is available in kmsg `v1.260618.0` and later, and belongs only to
-the `kmsg read` command. Check the binary that your shell actually resolves:
-
-```bash
-kmsg --version
-kmsg read --help
-```
-
-If the help output does not list the flag, update the Homebrew installation and
-check again:
-
-```bash
-brew update
-brew upgrade kmsg
-kmsg read --help
-```
-
-MCP clients use the JSON argument `background_safe: true` instead of the CLI
-spelling `--background-safe`.
-
-`author` is `"(me)"` for your own messages and `null` when the sender cannot be
-established (system lines, banners). `date` comes from the transcript's date
-separators. KakaoTalk prints a time only on the last message of a same-author
-run, so earlier messages of the run take that time with `time_source:
-"inferred"`; messages with their own label have `time_source: "label"`.
+Ctrl-C or `SIGTERM` after login stops early, still closes a window the command opened,
+and prints what was read with `meta.interrupted: true`.
 
 ### `watch`
 
 ```bash
-kmsg watch <chat> [options]
+kktcli watch <chat> [options]
 ```
 
 | Option | Description |
 |---|---|
-| `--poll-interval S` | Poll interval in seconds. Default: `0.2`; values are clamped to `0.2...10.0`. |
-| `--trace-ax` | Print AX traversal and recovery details. |
+| `--poll-interval S` | Poll interval in seconds. Default: `0.2` (clamped to 0.2–10). |
+| `--json` | One pretty-printed JSON object per event. |
+| `--include-system` | Include system rows. |
 | `-k`, `--keep-window` | Keep a chat window opened by the command. |
-| `--deep-recovery` | Enable deeper recovery when fast window detection fails. |
-| `--json` | Emit each event as a separate pretty-printed JSON object. |
-| `--include-system` | Include system rows such as date separators. |
+| `--deep-recovery` | Deeper window recovery. |
+| `--trace-ax` | Print AX details. |
 
-At startup, `watch` stabilizes a transcript baseline for up to two seconds and
-does not replay the existing history. Rows that cannot be assigned a safe
-timestamp may be suppressed during startup.
-
-Stop the process with Ctrl-C or `SIGTERM`.
+`watch` opens the room through KakaoTalk's search when it is not open (this needs
+KakaoTalk in front; keystrokes are posted only while it is). At startup it stabilizes a
+baseline for up to two seconds and does not replay the existing history. Stop it with
+Ctrl-C or `SIGTERM`.
 
 ### `send`
 
 ```bash
-kmsg send <recipient> <message> [options]
-kmsg send --chat-id <chat-id> <message> [options]
+kktcli send <recipient> <message> [options]
+kktcli send --chat-id <chat-id> <message> [options]
 ```
 
 | Option | Description |
 |---|---|
-| `--chat-id ID` | Resolve a synthetic ID produced by `kmsg chats`. |
-| `--dry-run` | Print the target and message without accessing or changing KakaoTalk. |
-| `--trace-ax` | Print AX traversal and retry details. |
-| `--no-cache` | Disable AX path cache use for this invocation. |
-| `--refresh-cache` | Remove relevant cached paths before sending. |
-| `-k`, `--keep-window` | Keep chat and list windows opened by the command. |
-| `--deep-recovery` | Enable deeper recovery after the fast path fails. |
+| `--chat-id ID` | A `chat_id` from `kktcli chats`. |
+| `--dry-run` | Print the target and message without touching KakaoTalk. |
+| `--no-cache` | Do not use the AX path cache. |
+| `--refresh-cache` | Clear the relevant cached paths first. |
+| `-k`, `--keep-window` | Keep windows opened by the command. |
+| `--deep-recovery` | Deeper window recovery. |
+| `--trace-ax` | Print AX details. |
 
-Without `--keep-window`, windows opened transiently by the command are closed
-after the send attempt.
+Sending needs keystrokes (Enter). kktcli brings KakaoTalk to the front and posts input
+only while KakaoTalk is verifiably frontmost; otherwise it stops with `NOT_FRONTMOST`,
+clears the unsent text from the input field, and sends nothing. Send one message per
+explicit request. Never use it for bulk messaging.
 
 ### `send-image`
 
 ```bash
-kmsg send-image <recipient> <image-path> [options]
+kktcli send-image <recipient> <image-path> [options]
 ```
 
-| Option | Description |
-|---|---|
-| `--trace-ax` | Print AX traversal and retry details. |
-| `--no-cache` | Disable AX path cache use for this invocation. |
-| `-k`, `--keep-window` | Keep chat and list windows opened by the command. |
-| `--deep-recovery` | Enable deeper recovery after the fast path fails. |
-
-The path must point to a readable image. `kmsg` loads the image into the macOS
-pasteboard and completes KakaoTalk's image-send UI.
+Options: `--no-cache`, `-k`/`--keep-window`, `--deep-recovery`, `--trace-ax`. The image is
+placed on the pasteboard and pasted with Cmd+V (only while KakaoTalk is frontmost).
+There is no dry run.
 
 ### `inspect`
 
 ```bash
-kmsg inspect [options]
+kktcli inspect [options]
 ```
 
 | Option | Description |
 |---|---|
 | `-d N`, `--depth N` | Maximum hierarchy depth. Default: `4`. |
 | `-w N`, `--window N` | Inspect a window by zero-based index. |
-| `--show-attributes` | Print available AX attributes. |
-| `--show-path` | Print the hierarchy path. |
-| `--show-frame` | Print element frames. |
-| `--show-index` | Print sibling indexes. |
-| `--show-flags` | Print enabled, focused, selected, and editable state. |
-| `--show-actions` | Print supported AX actions. |
-| `--debug-layout` | Enable path, frame, index, and state output together. |
-| `--row-summary` | Print message-row parsing diagnostics. |
-| `--row-range A:B` | Limit row summaries to an inclusive zero-based range. |
-
-`--row-range` applies only with `--row-summary`.
+| `--show-attributes`, `--show-path`, `--show-frame`, `--show-index`, `--show-flags`, `--show-actions` | Extra detail. |
+| `--debug-layout` | Path, frame, index and state together. |
+| `--row-summary`, `--row-range A:B` | Message-row parsing diagnostics. |
 
 ### `cache`
 
 ```bash
-kmsg cache
-kmsg cache status
-kmsg cache clear
-kmsg cache export <output-path>
-kmsg cache import <input-path>
-kmsg cache warmup [options]
+kktcli cache [status | clear | export <path> | import <path> | warmup [--recipient NAME]]
 ```
 
-Running `kmsg cache` without a subcommand runs `cache status`.
-
-| Subcommand | Description |
-|---|---|
-| `status` | Show path, schema, KakaoTalk fingerprint, entry count, and update time. |
-| `clear` | Delete the local AX path cache. |
-| `export PATH` | Export the current cache document as JSON. |
-| `import PATH` | Import JSON after schema and KakaoTalk fingerprint validation. |
-| `warmup` | Discover and store common chat-list, search, and input paths. |
-
-`cache warmup` accepts:
-
-| Option | Description |
-|---|---|
-| `--recipient NAME` | Also warm the chat-open and message-input path for a recipient. |
-| `--trace-ax` | Print AX traversal and retry details. |
-| `-k`, `--keep-window` | Keep a chat window opened by warmup. |
+Manages the AX path cache (`~/.kktcli/ax-cache.json`) used by `send` and the legacy
+paths. `kktcli cache` alone runs `status`.
 
 ### `mcp-server`
 
 ```bash
-kmsg mcp-server
+kktcli mcp-server
 ```
 
-Starts the native stdio MCP server. It accepts both `Content-Length` framing and
-one JSON-RPC request per line, and responds using the request's transport style.
-
-The server exposes:
+Starts a stdio MCP server (Content-Length framing or one JSON-RPC request per line).
+Each tool call runs the same `kktcli` binary as a subprocess.
 
 | Tool | Purpose |
 |---|---|
-| `kmsg_read` | Read by `chat` or `chat_id`, with limit, layout, recovery, background-safe, window, and trace controls. |
-| `kmsg_send` | Send a text message by chat name. |
-| `kmsg_send_image` | Send a local image by chat name. |
+| `kktcli_read` | Read by `chat` or `chat_id`. Options: `limit` (1–500), `allow_unread`, `scrollback` (true/false; omit for automatic), `scrollback_timeout` (seconds), `include_system`, `background_safe`, `keep_window`, `layout`, `deep_recovery`, `trace_ax`. |
+| `kktcli_send` | Send a text message by chat name. |
+| `kktcli_send_image` | Send a local image by chat name. |
 
-For send tools, `confirm=false` or an omitted `confirm` sends immediately.
-`confirm=true` does not send; it returns `CONFIRMATION_REQUIRED` so a supervisor
-can request approval and call again.
+A read call times out after 8 s (15 s with `deep_recovery`); an explicit
+`scrollback: true` extends that by `scrollback_timeout` plus 2 s. Failed reads return
+the code kktcli reported (see [Error codes](#error-codes)) with its message, hint and
+details; `meta.read` of a successful read carries kktcli's own `meta`.
 
-See [docs/openclaw.md](docs/openclaw.md) for complete integration examples.
+For the send tools, `confirm=false` or an omitted `confirm` sends immediately;
+`confirm=true` returns `CONFIRMATION_REQUIRED` without sending, so a supervisor can ask
+the user first.
 
-### `update`
+Example client configuration:
 
-```bash
-kmsg update
+```json
+{
+  "mcpServers": {
+    "kktcli": {
+      "command": "/Users/<you>/.local/bin/kktcli",
+      "args": ["mcp-server"],
+      "env": {
+        "KKTCLI_DEFAULT_BACKGROUND_SAFE": "false",
+        "KKTCLI_TRACE_DEFAULT": "false"
+      }
+    }
+  }
+}
 ```
-
-Moves the current installation onto the Homebrew-managed release:
-
-1. Finds `brew` on `PATH`, at `/opt/homebrew/bin/brew`, or at
-   `/usr/local/bin/brew`, and runs Homebrew's official installer when none of
-   them exists.
-2. Runs `brew install` or `brew upgrade` for `channprj/tap/kmsg`.
-3. Verifies the resulting binary by running it with `--version`.
-4. Replaces a directly installed `kmsg` with a link to the verified binary, so
-   the path the shell already resolved keeps working. A build product under
-   `.build` is never replaced.
-
-Progress goes to `stderr` and the final summary to `stdout`. Homebrew or `sudo`
-may ask for confirmation. The command needs no Accessibility permission and
-never edits shell startup files.
 
 ## JSON output
 
-### Chats
+All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to stderr.
 
-```bash
-kmsg chats --json
-```
+### `chats --json`
 
 ```json
 {
-  "count": 1,
   "chats": [
     {
-      "title": "홍길동",
       "chat_id": "chat_7f42c5e1d9ab",
-      "last_message": "곧 도착해요",
       "has_unread": true,
+      "last_message": "곧 도착해요",
+      "title": "홍길동",
       "unread_count": 2
     }
-  ]
+  ],
+  "count": 1
 }
 ```
 
-### Read
-
-```bash
-kmsg read "홍길동" --limit 20 --json
-```
+### `read --json`
 
 ```json
 {
-  "ok": true,
   "chat": "홍길동",
   "chat_id": null,
-  "fetched_at": "2026-02-26T01:23:45.678Z",
   "count": 1,
+  "fetched_at": "2026-11-24T01:23:45.678Z",
   "messages": [
     {
+      "attachment_count": 0,
       "author": "홍길동",
-      "side": "other",
-      "kind": "message",
       "body": "밤이 깊었네",
-      "date": "2026-02-26",
+      "date": "2026-11-24",
+      "edited": false,
+      "has_attachment": false,
+      "has_image": false,
+      "image_count": 0,
+      "kind": "message",
+      "link_count": 0,
+      "side": "other",
       "time": "00:27",
       "time_raw": "오전 12:27",
       "time_source": "label",
-      "unread_count": null,
-      "edited": false,
-      "has_image": false,
-      "image_count": 0,
-      "link_count": 0,
-      "has_attachment": false,
-      "attachment_count": 0
+      "unread_count": null
     }
   ],
   "meta": {
-    "opened_via": "chat_list_menu",
-    "window": "closed",
-    "window_detail": null,
-    "unread_badge": null,
-    "rows_total": 84,
-    "rows_read": 84,
     "date_from_earlier_separator": false,
-    "scrollback": null
-  }
+    "interrupted": false,
+    "list_recovery": null,
+    "main_window": null,
+    "opened_via": "chat_list_menu",
+    "row_title": "홍길동",
+    "rows_read": 84,
+    "rows_total": 84,
+    "scrollback": null,
+    "unread_badge": null,
+    "window": "closed",
+    "window_detail": null
+  },
+  "ok": true
 }
 ```
 
-`date` and `time_raw` may be absent when KakaoTalk does not expose the
-corresponding metadata.
+`chat` is the window title; `meta.row_title` is the chat-list title, which differs for
+team chats (`팀채팅, <name>` opens a window titled `<name>`). `meta.opened_via` is
+`existing_window`, `chat_list_menu`, `legacy_chat_list` or `legacy_search`;
+`meta.window` is `untouched`, `closed`, `kept_open` or `left_open`.
 
-### Watch
-
-```bash
-kmsg watch "홍길동" --json
-```
+### Errors
 
 ```json
 {
-  "chat": "홍길동",
-  "detected_at": "2026-03-25T10:20:30.123Z",
-  "event": "message",
-  "message": {
-    "author": "홍길동",
-    "time_raw": "10:20",
-    "body": "새 메시지",
-    "has_image": false,
-    "image_count": 0,
-    "link_count": 0,
-    "has_attachment": false,
-    "attachment_count": 0
-  }
+  "chat": "가족",
+  "chat_id": null,
+  "details": { "unread_badge": "안읽음 2" },
+  "error": {
+    "code": "UNREAD_REFUSED",
+    "hint": "Pass --allow-unread to open it anyway.",
+    "message": "'가족' shows unread messages (안읽음 2); opening it would send read receipts."
+  },
+  "ok": false
 }
 ```
 
-With `--include-system`, `event` may be `"system"`.
+### Error codes
 
-JSON payloads are written to `stdout`. `--trace-ax` diagnostics remain on
-`stderr`.
+| Code | Exit | Meaning |
+|---|---:|---|
+| `INVALID_ARGUMENT` | 64 | Bad or conflicting arguments (also argument parse errors with `--json`). |
+| `UNREAD_REFUSED` | 3 | The row shows unread messages; not opened. |
+| `UNREAD_UNVERIFIED` | 3 | The row could not be read completely, or the legacy path cannot check it; not opened. |
+| `UNKNOWN_CHAT_ID` | 1 | The `chat_id` is not in the registry; run `kktcli chats`. |
+| `CHAT_NOT_IN_LIST` | 1 | No chat-list row matches (after list recovery, if any). |
+| `AMBIGUOUS_CHAT` | 1 | Several rows match a partial name equally well. |
+| `CHAT_LIST_UNAVAILABLE` | 1 | The main window shows no chat list (e.g. another tab). |
+| `WINDOW_NOT_READY` | 1 | The main window could not be found or reopened. |
+| `MAIN_WINDOW_MINIMIZED`, `KAKAO_HIDDEN` | 1 | Restore KakaoTalk's window first. |
+| `ROW_NOT_VISIBLE` | 1 | The row could not be scrolled into view. |
+| `ROW_CHANGED` | 1 | The list reordered while opening; retry. |
+| `MENU_UNAVAILABLE`, `MENU_ITEM_MISSING`, `MENU_ITEM_BLOCKED` | 1 | The context menu could not be used; nothing was pressed. |
+| `CHAT_WINDOW_NOT_OPENED` | 1 | No window appeared after 채팅방 열기. |
+| `TRANSCRIPT_UNAVAILABLE` | 1 | The window has no readable transcript. |
+| `BACKGROUND_SAFE_BLOCKED` | 1 | `--background-safe` and no matching open window. |
+| `ACCESSIBILITY_PERMISSION_DENIED`, `KAKAO_NOT_RUNNING`, `KAKAO_LAUNCH_FAILED`, `KAKAO_UNAVAILABLE`, `KAKAO_AUTH_FAILED` | 1 | Setup or login problem. |
+| `NOT_FRONTMOST`, `SEARCH_MISS`, `FOCUS_FAIL`, `INPUT_NOT_REFLECTED`, `LEGACY_OPEN_FAILED` | 1 | `--legacy-open` failures. |
+| `INTERRUPTED` | 130 | Stopped before a room was opened. |
 
 ## Configuration
 
@@ -542,197 +427,73 @@ JSON payloads are written to `stdout`. `--trace-ax` diagnostics remain on
 
 | Variable | Default | Behavior |
 |---|---:|---|
-| `KMSG_AX_TIMEOUT` | `0.25` | AX messaging timeout in seconds. Accepted range: `0.05...5.0`; invalid values fall back to the default. |
-| `KMSG_DEFAULT_DEEP_RECOVERY` | `false` | Default `deep_recovery` value for MCP tools. |
-| `KMSG_DEFAULT_BACKGROUND_SAFE` | `false` | Default `background_safe` value for `kmsg_read`. |
-| `KMSG_TRACE_DEFAULT` | `false` | Default `trace_ax` value for MCP tools. |
-| `KMSG_DEFAULT_READ_LAYOUT` | `preserve` | Default MCP read layout: `preserve`, `left`, `right`, `split-left`, or `split-right`. |
-| `KMSG_MCP_STARTUP_STATUS_CHECK` | `false` | When `true`, MCP initialization also runs `kmsg status`; otherwise it checks only the binary version. |
-| `KMSG_MCP_VERSION` | build version | Overrides MCP server version metadata. |
-
-Example:
-
-```bash
-KMSG_DEFAULT_BACKGROUND_SAFE=true \
-KMSG_DEFAULT_READ_LAYOUT=split-right \
-kmsg mcp-server
-```
+| `KKTCLI_AX_TIMEOUT` | `0.25` | Default AX messaging timeout in seconds (0.05–5.0). |
+| `KKTCLI_DEFAULT_DEEP_RECOVERY` | `false` | Default `deep_recovery` for MCP tools. |
+| `KKTCLI_DEFAULT_BACKGROUND_SAFE` | `false` | Default `background_safe` for `kktcli_read`. |
+| `KKTCLI_TRACE_DEFAULT` | `false` | Default `trace_ax` for MCP tools. |
+| `KKTCLI_DEFAULT_READ_LAYOUT` | `preserve` | Default MCP read layout. |
+| `KKTCLI_MCP_STARTUP_STATUS_CHECK` | `false` | When `true`, MCP initialization also runs `kktcli status`. |
+| `KKTCLI_MCP_VERSION` | build version | Overrides the MCP server version metadata. |
 
 ### Local state
 
 | Path | Contents |
 |---|---|
-| `~/.config/kmsg/credentials.json` | Encrypted credential document. |
-| `~/.config/kmsg/credentials/primary.key` | Local AES-GCM key. |
-| `~/.kmsg/chat-registry.json` | Synthetic chat identities. |
-| `~/.kmsg/ax-cache.json` | Self-healing AX paths. |
+| `~/.config/kktcli/credentials.json` | Encrypted credential document. |
+| `~/.config/kktcli/credentials/primary.key` | Local AES-GCM key. |
+| `~/.kktcli/chat-registry.json` | Synthetic chat identities and last seen rows. |
+| `~/.kktcli/ax-cache.json` | Cached AX paths. |
 
-Do not publish these files or include their contents in issue reports.
-
-## Examples
-
-Read without disturbing foreground windows:
-
-```bash
-kmsg read "홍길동" --json --background-safe
-```
-
-Read by synthetic ID and arrange the window on the right:
-
-```bash
-kmsg chats --json
-kmsg read --chat-id "chat_7f42c5e1d9ab" \
-  --layout split-right \
-  --limit 50 \
-  --json
-```
-
-Watch for new messages:
-
-```bash
-kmsg watch "홍길동" --json --poll-interval 0.5
-```
-
-Preview and then send:
-
-```bash
-kmsg send "홍길동" "안녕하세요" --dry-run
-kmsg send "홍길동" "안녕하세요"
-```
-
-Warm and inspect the AX cache:
-
-```bash
-kmsg cache warmup --recipient "홍길동" --trace-ax
-kmsg cache status
-```
-
-Collect parsing diagnostics:
-
-```bash
-kmsg inspect --window 0 --depth 20 --debug-layout
-kmsg inspect --window 0 --depth 20 --row-summary --row-range 10:30
-kmsg read "홍길동" --limit 20 --trace-ax
-```
+These files contain private data. Do not publish them or attach them to issues. kktcli
+never reads or writes `~/.kmsg` or `~/.config/kmsg`.
 
 ## Troubleshooting
 
 ### Accessibility permission is not granted
 
-1. Run `kmsg status`.
-2. Open **System Settings → Privacy & Security → Accessibility**.
-3. Add or enable the exact `kmsg` binary you run.
-4. Retry `kmsg status`.
+Run `kktcli status`, then enable the exact `kktcli` binary under **System Settings →
+Privacy & Security → Accessibility**. A rebuilt or moved binary may need to be added
+again.
 
-A rebuilt or moved binary may need to be added again.
+### `UNREAD_REFUSED`
 
-### KakaoTalk cannot be launched or has no usable window
+The room has unread messages. Ask the user before passing `--allow-unread`, which sends
+read receipts. Reading the room in KakaoTalk yourself first also clears the badge.
 
-Open KakaoTalk manually, complete login if necessary, and run:
+### `CHAT_NOT_IN_LIST` or a wrong room
 
-```bash
-kmsg status --verbose
-```
-
-Use `--deep-recovery` only when the normal fast path cannot recover a window.
-
-### A chat name or `chat_id` is not found
-
-Refresh local identities:
-
-```bash
-kmsg chats --json
-```
-
-A renamed room receives a new local identity. If duplicate rooms have the same
-name, prefer the `chat_id` values produced from the current chat list.
-
-### Background-safe read fails
-
-`--background-safe` never opens or searches for a chat. Expose the target chat
-window first, or omit the flag when foreground automation is acceptable.
+Refresh the registry with `kktcli chats --json` and use the `chat_id`. A renamed room
+gets a new identity. Make sure the main window shows the 채팅 tab.
 
 ### Messages cannot be parsed
 
-Collect both hierarchy and trace evidence:
-
 ```bash
-kmsg inspect --window 0 --depth 20 --row-summary
-kmsg read "Chat name" --trace-ax
+kktcli inspect --window 0 --depth 20 --row-summary
+kktcli read "Chat name" --trace-ax
 ```
 
-Attach the relevant output to an issue after removing private message content.
-
-### Cached paths appear stale
-
-```bash
-kmsg cache status
-kmsg cache clear
-```
-
-Verify target and message parsing without touching KakaoTalk:
-
-```bash
-kmsg send "Chat name" "Test" --dry-run
-```
-
-`--dry-run` exits before KakaoTalk access. If a real test send is acceptable,
-retry that send with `--no-cache` to compare the uncached UI path:
-
-```bash
-kmsg send "Chat name" "Test" --no-cache
-```
+Remove private message content before sharing any output.
 
 ### MCP initialization fails
 
-Verify the binary directly:
-
 ```bash
-kmsg --version
-kmsg status
-kmsg mcp-server
+kktcli --version
+kktcli status
 ```
 
-The MCP server skips the interactive status check by default. Set
-`KMSG_MCP_STARTUP_STATUS_CHECK=true` only when startup should validate full
-KakaoTalk readiness.
+The MCP server skips the interactive status check by default; set
+`KKTCLI_MCP_STARTUP_STATUS_CHECK=true` to validate KakaoTalk at startup.
 
-## Development and releases
-
-Build debug and release variants:
+## Development
 
 ```bash
 swift build
 swift build -c release
-.build/debug/kmsg --version
+.build/debug/kktcli --version
+make test-core                      # pure-logic unit tests (never touch KakaoTalk)
+python3 -m unittest discover -s tests -p "test_*.py"   # source contract tests
 ```
 
-Useful manual checks:
-
-```bash
-.build/debug/kmsg status --verbose
-.build/debug/kmsg inspect --depth 5
-.build/debug/kmsg chats --verbose --limit 20
-.build/debug/kmsg send "Name" "Message" --dry-run
-.build/debug/kmsg read "Chat" --limit 50
-```
-
-The root `VERSION` file is managed through Headatever-backed make targets:
-
-```bash
-make version
-make release
-make release-major
-make release-push
-```
-
-Do not hand-edit `VERSION`. See [VERSIONING.md](VERSIONING.md) for the
-`MAJOR.YYMMDD.PATCH_COUNT` rules.
-
-Pushing a matching `v*` tag triggers the release workflow, which:
-
-1. Builds arm64 and x86_64 release binaries.
-2. combines them as `kmsg-macos-universal`;
-3. verifies the embedded version against the tag;
-4. creates or updates the GitHub Release; and
-5. synchronizes the required Homebrew tap metadata.
+`make test-core BUILD_PATH=<dir>` builds into another directory. The version comes from
+the `VERSION` file (`MAJOR.MINOR.PATCH`); `--version` prints it together with the
+upstream release, e.g. `0.1.0 (based on kmsg 1.260921.0)`.

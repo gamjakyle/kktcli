@@ -1,163 +1,162 @@
-# kmsg — KakaoTalk CLI & MCP server for macOS
+# kktcli — KakaoTalk CLI for macOS
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Total downloads](https://img.shields.io/github/downloads/channprj/kmsg/total?label=downloads&logo=github)](https://github.com/channprj/kmsg/releases)
+[한국어](README.md) · [Usage](USAGE.md) · [Architecture](ARCHITECTURE.md)
 
-[Project website](https://channprj.github.io/kmsg/en/) · [한국어](README.md)
+`kktcli` (KaKaoTalk CLI) is an unofficial command-line tool for KakaoTalk for Mac,
+built for terminals and coding agents with a focus on **reading** chat lists and
+messages. It reads the KakaoTalk app on screen through the macOS Accessibility API; it
+never talks to Kakao's servers or the private LOCO protocol.
 
-<p><img src="assets/kmsg-logo.jpg" alt="kmsg logo" width="220" /></p>
+kktcli is a fork of [channprj/kmsg](https://github.com/channprj/kmsg) (MIT). Thanks to
+Park Hee Chan and the kmsg contributors. See [What changed from kmsg](#what-changed-from-kmsg).
 
-`kmsg` is an unofficial KakaoTalk CLI and native MCP server for macOS.
-It reads, watches, and sends messages through the macOS Accessibility API,
-with structured output for local automation and AI agents.
+## Safety and policy
 
-> **Disclaimer:** `kmsg` is not an official Kakao Corp. tool.
-> You are responsible for complying with applicable laws, service terms, and
-> organizational security policies in your own account and environment.
-> Use may result in account restrictions, malfunction, data loss, or other harm.
-> The reasoning behind using macOS Accessibility instead of the private LOCO
-> protocol is documented in [Architecture](ARCHITECTURE.md#accessibility-instead-of-a-private-protocol)
-> and represents the author's personal assessment, not Kakao's position.
+Please read this first.
 
-## Demo
+- **Not affiliated with Kakao.** kktcli is not made or endorsed by Kakao Corp., and
+  there is no official permission to automate KakaoTalk.
+- **Accounts can be restricted.** KakaoTalk's terms and operating policy may restrict
+  automated use, and accounts judged to violate them can be suspended temporarily or
+  permanently. You use kktcli at your own risk.
+- **Read-first design.** `chats` and `read` post no synthetic keystrokes or clicks; they
+  read the screen through Accessibility and press only specific buttons and menu
+  items. They work while KakaoTalk stays in the background.
+- **Never mass-send.** `send` and `send-image` remain for single messages the user
+  explicitly asked for. Repeated sending to many rooms or people looks like spam and
+  can get the account restricted.
+- **Unread rooms are refused by default.** Opening a room with unread messages sends
+  read receipts to the other participants, so `read` does not open a room whose
+  chat-list row shows an unread badge and stops with `UNREAD_REFUSED` (exit status 3).
+  It opens such rooms only with `--allow-unread`.
+- **Chat contents stay on this Mac.** kktcli contains no network code. If you pipe its
+  output into an AI service (a coding agent, a chatbot), that content is transferred to
+  that company, together with your chat partners' personal data. Read only what the
+  task needs.
+- **Local files:** `~/.kktcli` (chat registry, AX path cache) and `~/.config/kktcli`
+  (encrypted login; the key is on the same Mac). kktcli never reads or writes an
+  installed kmsg's `~/.kmsg` or `~/.config/kmsg`.
 
-https://github.com/user-attachments/assets/c620b2e3-7106-40fa-86d1-ed847e3b1a6f
+## What changed from kmsg
 
-## Featured video
+| Area | kmsg 1.260921.0 | kktcli 0.1.0 |
+|---|---|---|
+| Opening a room | Row select + Enter, typing into search, double-click (key and mouse events) | Presses only the row's context-menu item **채팅방 열기** through Accessibility; no keystrokes, works with KakaoTalk in the background |
+| Unread rooms | Opened, which sends read receipts | Refused by default (`UNREAD_REFUSED`); `--allow-unread` to open |
+| `read --chat-id` | Rescans about 200 chat-list rows on every call | Starts at the registry's last known row and stops at the first match |
+| `chats` titles | Unread badge text could appear as the room title | Title read only from the title label (`_NS:40`); adds `has_unread` / `unread_count` |
+| Message parsing | `date` empty; unlabeled burst messages took the previous message's time | `date` from date separators, burst times inferred (`time_source`: `label` / `inferred`), sender carried forward, channel banners never attributed to `(me)` |
+| Older messages | Only the initially loaded rows | Scrollback (`--scrollback`, time-bounded) |
+| Closing windows | First button found, or Cmd+W | Only the window's close button; otherwise left open and reported |
+| Keyboard paths | No check of the frontmost app | Paths that still type (send, login, legacy open) post input only while KakaoTalk is frontmost |
+| `--json` | Plain text when empty or failing | Always exactly one JSON document (error code and exit status) |
+| List state recovery | None | Restores a search-filtered chat list and a closed main window by pressing only specific buttons / menu items |
+| Team chats | Could fail in the search fallback | Matches row title `팀채팅, <name>` with window title `<name>` |
+| Distribution | `update` command, Homebrew, release automation | Build from source; no network code; separate data directories |
+| MCP | `kmsg_*` tools | `kktcli_*` tools, `allow_unread` and scrollback options, read error codes passed through |
 
-<a href="https://www.youtube.com/watch?v=_Pd1G33_R48&t=1020s"><img src="https://i.ytimg.com/vi/_Pd1G33_R48/maxresdefault.jpg" alt="Featured video: 헤르메스 에이전트 5개로 뉴스 큐레이션부터 주식 매매까지 자동화한 방법 전부 공개합니다" width="400" /></a>
+## Measured results
 
-**Builder Josh:** [헤르메스 에이전트 5개로 뉴스 큐레이션부터 주식 매매까지 자동화한 방법 전부 공개합니다 (AI 엔지니어 샘 호트만님)](https://www.youtube.com/watch?v=_Pd1G33_R48&t=1020s) — starts at 17:00
+Setup: one Mac, KakaoTalk for Mac 26.10.0, one account, 20 rooms, the latest 20
+messages of each. The same Codex model drove all three tools.
 
-<a href="https://www.youtube.com/watch?v=xz5fA7OyvQ0"><img src="https://i.ytimg.com/vi/xz5fA7OyvQ0/maxresdefault.jpg" alt="Featured video: 나만의 Hermes 시스템 구축 방법" width="400" /></a>
+| | kktcli 0.1.0 | kmsg 1.260921.0 | Codex Computer Use |
+|---|---|---|---|
+| Rooms read successfully | 20/20 | 17/20 | 20/20 |
+| Time per room (median) | 3.2 s (2.4–9.9 s) | 33 s (32 s of it in kmsg) | 59 s |
+| Messages recalled | 99.7% | 87.9% (failures included) | 98.1% |
+| Sender correct | 100% | 97% | 99.7% |
+| Time correct (messages with a time label) | 100% | 98% | 100% |
 
-**Sam Hottman:** [나만의 Hermes 시스템 구축 방법 (문제정의부터 구축까지, 해외 AI 인사이트 발굴하기)](https://www.youtube.com/watch?v=xz5fA7OyvQ0)
+kktcli details:
 
-## Highlights
+- Zero synthetic key or click events; KakaoTalk stayed in the background; every
+  opened window was closed with its close button. Team chats, a self chat and four
+  channel rooms all worked.
+- `chats`: 6.8 s for 182 rows, titles and unread flags 182/182 correct.
+- Scrollback: 200 messages with dates in 17 s.
+- Recovery: a visible search was restored (취소, then 검색); a closed main window was
+  reopened through **카카오톡 열기** (this brings KakaoTalk to the front); a missing
+  room returns `CHAT_NOT_IN_LIST`; bad arguments return JSON with exit status 64. The
+  hidden-filter state (no search field, filtered list) could not be reproduced live and
+  is **unverified**.
 
-- List chats and assign reusable local `chat_id` values.
-- Read recent messages or watch a chat for new messages.
-- Send text and images by controlling the visible KakaoTalk UI.
-- Produce structured JSON while keeping AX traces on `stderr`.
-- Run a native stdio MCP server with read, send, and image-send tools.
-- Use background-safe reads, configurable window layouts, recovery modes, and
-  a self-healing AX path cache.
+kmsg failures: two channel rooms and one team chat failed; another team chat failed
+once and left the search box filled. Root cause for the team chats: kmsg's search
+fallback searches for `팀채팅, <name>`, which KakaoTalk search never matches (0 results;
+1 result without the prefix), so when its row select + Enter step misses, team chats
+cannot recover. Row select + Enter itself worked 10/10 when the chat list had focus.
+
+Caveats: one Mac, one account, n=20 rooms. The reference read used for accuracy was
+produced by an Accessibility reader, the same data source as kktcli, which may favor
+kktcli.
 
 ## Requirements
 
 - macOS 13 or later
-- [KakaoTalk for macOS](https://apps.apple.com/kr/app/kakaotalk/id869223134?mt=12)
-- Accessibility permission for the installed `kmsg` binary
+- KakaoTalk for Mac. **Tested only on 26.10.0 (build 2010)**; other versions may lay
+  out their windows differently.
+- Accessibility permission for the `kktcli` binary you run
+- Swift 6 or later to build (Xcode or the Command Line Tools)
 
-## Installation
-
-Homebrew is the primary installation path:
-
-```bash
-brew install channprj/tap/kmsg
-```
-
-Update an existing installation with:
+## Build and install from source
 
 ```bash
-kmsg update
+swift build -c release
+mkdir -p ~/.local/bin
+install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
+kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
+kktcli status      # Accessibility permission, KakaoTalk running and logged in
 ```
 
-`kmsg update` installs Homebrew when it is missing, installs or upgrades the
-formula, and links a directly installed binary to the Homebrew-managed command.
-
-Direct-download and source-build instructions are in [USAGE.md](USAGE.md#installation).
+Make sure `~/.local/bin` is on `PATH`, and enable that exact binary under **System
+Settings → Privacy & Security → Accessibility**. A rebuilt or moved binary may need to
+be added again.
 
 ## Quick start
 
 ```bash
-kmsg status
-kmsg chats
-kmsg read "Chat name" --limit 20
-kmsg send "Chat name" "Hello" --dry-run
+kktcli chats --json --limit 30                    # rooms, chat_id, unread state
+kktcli read --chat-id "<chat_id>" --limit 20 --json
+kktcli read "Room name" --limit 200 --scrollback   # include older messages
+kktcli read "Room name" --json --background-safe   # only read an already open window
 ```
 
-`kmsg status` requests Accessibility permission, launches KakaoTalk when
-needed, and checks authentication. The final command is a dry run and does not
-send a message.
+`read` reads an open window in place; otherwise it finds the room in the chat list,
+opens it, reads it and closes it again. All commands and options are in
+[USAGE.md](USAGE.md).
 
 ## Coding agent skill
 
-The bundled `kmsg` skill gives Claude Code and Codex the same structured
-workflow for finding chats as JSON, reading through stable `chat_id` values,
-and previewing sends with a dry run. Install the `kmsg` binary with Homebrew
-first, then install the skill globally:
+[`skills/kktcli`](skills/kktcli/SKILL.md) tells coding agents how to use kktcli safely
+(read first, respect unread rooms, send only on explicit request and after a dry run,
+once). For Claude Code, copy the folder to `~/.claude/skills/kktcli` and invoke it with
+`/kktcli`. For other agents, follow their skill installation instructions.
+
+## MCP server
 
 ```bash
-npx skills add channprj/kmsg --skill kmsg --agent claude-code codex -g -y
+kktcli mcp-server
 ```
 
-Invoke it with the selector for your agent:
+A stdio MCP server with the tools `kktcli_read`, `kktcli_send` and `kktcli_send_image`.
+`kktcli_read` accepts `allow_unread`, `scrollback` and `scrollback_timeout`, and on
+failure returns kktcli's own error code such as `UNREAD_REFUSED`. See
+[USAGE.md](USAGE.md#mcp-server) for a configuration example.
 
-| Agent | Invocation |
-| --- | --- |
-| Claude Code | `/kmsg` |
-| Codex | `$kmsg` |
+## Documentation
 
-```text
-/kmsg Summarize the 10 latest messages in Release Prep
-$kmsg Send 'Deployment complete.' to Release Prep
-```
+- [USAGE.md](USAGE.md) — commands, options, JSON output, error codes, configuration,
+  troubleshooting
+- [ARCHITECTURE.md](ARCHITECTURE.md) — structure and design decisions
 
-The skill always checks the recipient and text with `dry-run` before a text
-send. It runs the real `send` once only when the user explicitly asks to send;
-draft and preview requests never send. Because `send-image` has no dry-run, it
-runs only when both the recipient and actual image delivery are explicit.
-Restart the agent session if the newly installed skill does not appear.
+## Acknowledgements
 
-## More documentation
-
-- [Usage](USAGE.md) — installation, commands, configuration, examples, and troubleshooting
-- [Architecture](ARCHITECTURE.md) — components, data flow, state, and design decisions
-- [OpenClaw integration](docs/openclaw.md) — MCP and real-time watch integration
-- [Versioning](VERSIONING.md) — release format and automation
-- [Korean README](README.md) — Korean version of this document
-
-## Frequently asked questions
-
-### What is kmsg?
-
-`kmsg` is an unofficial, open-source KakaoTalk CLI and native MCP server for
-macOS. It lets people, scripts, and AI agents read, watch, and send KakaoTalk
-messages from the command line.
-
-### Is kmsg an official KakaoTalk tool?
-
-No. `kmsg` is an independent open-source project and is not affiliated with,
-endorsed by, or maintained by Kakao Corp.
-
-### Which operating systems does kmsg support?
-
-`kmsg` supports macOS 13 or later and requires KakaoTalk for macOS. It does not
-support Windows, Linux, Android, or iOS.
-
-### How does kmsg access KakaoTalk?
-
-`kmsg` controls the visible KakaoTalk macOS application through Apple's
-Accessibility API. It does not implement KakaoTalk's private LOCO protocol.
-
-### Does kmsg include an MCP server?
-
-Yes. The native `kmsg mcp-server` command exposes read, text-send, and
-image-send tools over stdio for MCP-compatible clients and AI agents.
-
-### How do I install kmsg?
-
-Install it with Homebrew by running `brew install channprj/tap/kmsg`. Direct
-downloads and source-build instructions are available in [Usage](USAGE.md).
-
-## Inspiration
-
-This project is strongly inspired by
-[steipete](https://github.com/steipete) and his work on
-[imsg](https://github.com/steipete/imsg), as well as
+kktcli started from [channprj/kmsg](https://github.com/channprj/kmsg), which was
+inspired by [steipete/imsg](https://github.com/steipete/imsg) and
 [OpenClaw](https://github.com/openclaw/openclaw).
 
 ## License
 
-`kmsg` is available under the [MIT License](LICENSE).
+[MIT License](LICENSE). The original kmsg copyright notice is kept, with a notice added
+for this fork's modifications.

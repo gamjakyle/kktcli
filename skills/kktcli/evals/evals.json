@@ -1,19 +1,30 @@
 {
-  "skill_name": "kmsg",
+  "skill_name": "kktcli",
   "evals": [
     {
       "id": 1,
       "prompt": "프로젝트 채팅방의 최근 메시지 10개를 읽고 결정된 내용만 요약해줘. 다른 채팅 내용은 보여주지 마.",
-      "expected_output": "KMSG readiness is checked, the exact chat is resolved through structured discovery, ten messages are read as JSON, and only requested decisions are summarized.",
+      "expected_output": "kktcli readiness is checked, the exact chat is resolved through structured discovery, ten messages are read as JSON, and only the requested decisions are summarized.",
       "files": [],
       "expectations": [
-        "Runs command -v kmsg and kmsg status before chat operations",
-        "Uses kmsg chats --json and then reads by chat_id with --limit 10 --json",
+        "Runs command -v kktcli and kktcli status before chat operations",
+        "Uses kktcli chats --json and then reads by chat_id with --limit 10 --json",
         "Does not run send or send-image"
       ]
     },
     {
       "id": 2,
+      "prompt": "고객지원 채팅방 최근 대화 좀 읽어줘.",
+      "expected_output": "The read fails with UNREAD_REFUSED because the room shows unread messages; the agent explains that opening it would send read receipts and asks before using --allow-unread.",
+      "files": [],
+      "expectations": [
+        "Recognizes the UNREAD_REFUSED error code from the JSON output",
+        "Does not add --allow-unread without asking the user",
+        "Explains that opening the room sends read receipts to the other participants"
+      ]
+    },
+    {
+      "id": 3,
       "prompt": "출시 준비 채팅방에 '배포 완료했습니다.'라고 보내줘.",
       "expected_output": "The exact chat is resolved, the message is previewed with --dry-run, and the actual text send runs once because the user explicitly requested delivery.",
       "files": [],
@@ -24,13 +35,13 @@
       ]
     },
     {
-      "id": 3,
+      "id": 4,
       "prompt": "디자인팀 채팅방에 보낼 /tmp/review.png 이미지 전송 명령을 준비해줘. 아직 이미지는 보내지 마.",
       "expected_output": "The image path and recipient requirements are explained, but send-image is not executed because the user requested preparation only.",
       "files": [],
       "expectations": [
         "Recognizes that send-image has no dry-run mode",
-        "Does not execute kmsg send-image",
+        "Does not execute kktcli send-image",
         "Returns the command as a preview and notes that explicit send authorization is still required"
       ]
     }
