@@ -31,20 +31,23 @@ public struct InputVerdict: Equatable, Sendable {
 /// the pointer), not to KakaoTalk. Posting is allowed only when KakaoTalk is verifiably in front;
 /// anything unverifiable is refused.
 public enum FrontmostPolicy {
+    /// Any negative evidence refuses; at least one positive signal is required. The system-wide
+    /// focused application is resolved without a round trip to KakaoTalk, so it still answers
+    /// while KakaoTalk is busy handling the previous keystroke and its AXFrontmost read times out.
     public static func keyboard(_ evidence: FrontmostEvidence) -> InputVerdict {
         guard let kakaoPID = evidence.kakaoPID else {
             return InputVerdict(allowed: false, reason: "KakaoTalk is not running")
         }
-        guard let frontmost = evidence.kakaoReportsFrontmost else {
-            return InputVerdict(allowed: false, reason: "could not read KakaoTalk's AXFrontmost")
-        }
-        guard frontmost else {
-            return InputVerdict(allowed: false, reason: "KakaoTalk is not the frontmost app")
-        }
         if let focused = evidence.focusedApplicationPID, focused != kakaoPID {
             return InputVerdict(allowed: false, reason: "focused application pid \(focused) is not KakaoTalk (\(kakaoPID))")
         }
-        return InputVerdict(allowed: true, reason: "KakaoTalk is frontmost")
+        if evidence.kakaoReportsFrontmost == false {
+            return InputVerdict(allowed: false, reason: "KakaoTalk is not the frontmost app")
+        }
+        if evidence.focusedApplicationPID == kakaoPID || evidence.kakaoReportsFrontmost == true {
+            return InputVerdict(allowed: true, reason: "KakaoTalk is frontmost")
+        }
+        return InputVerdict(allowed: false, reason: "could not verify that KakaoTalk is frontmost")
     }
 
     /// Mouse clicks additionally require that KakaoTalk owns the element under the point.

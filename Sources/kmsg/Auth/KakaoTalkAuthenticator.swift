@@ -21,6 +21,7 @@ enum AuthenticationError: Error, LocalizedError {
     case lockPasswordUnavailable
     case lockRejectedAccountPassword
     case lockSubmitRefusedNotFrontmost
+    case inputRefusedNotFrontmost
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +41,8 @@ enum AuthenticationError: Error, LocalizedError {
             return "KakaoTalk rejected the saved account password at the lock screen. Run `kmsg auth login` to save your current password, then retry."
         case .lockSubmitRefusedNotFrontmost:
             return "[NOT_FRONTMOST] KakaoTalk was not the frontmost app, so kmsg did not press Enter on the lock screen. Nothing was submitted and the saved password was kept; bring KakaoTalk to the front and retry."
+        case .inputRefusedNotFrontmost:
+            return "[NOT_FRONTMOST] KakaoTalk was not the frontmost app, so kmsg stopped typing the login and submitted nothing; bring KakaoTalk to the front and retry."
         }
     }
 }
@@ -142,10 +145,12 @@ final class KakaoTalkAuthenticator {
             throw AuthenticationError.missingUsernameField
         }
         _ = runner.setTextWithVerification("", on: form.usernameField, label: "auth username clear", attempts: 1)
+        let inputBlocksBefore = KakaoTalkInputGuard.shared.blockedCount
         let usernameReady =
             runner.setTextWithVerification(credentials.identifier, on: form.usernameField, label: "auth username", attempts: 2) ||
             runner.typeTextWithVerification(credentials.identifier, on: form.usernameField, label: "auth username", attempts: 2)
         guard usernameReady else {
+            try throwIfInputRefused(since: inputBlocksBefore)
             throw AuthenticationError.missingUsernameField
         }
 
@@ -157,6 +162,7 @@ final class KakaoTalkAuthenticator {
             setTextWithoutReflection(credentials.password, on: form.passwordField, label: "auth password") ||
             typeTextWithoutReflection(credentials.password, into: form.passwordField, label: "auth password")
         guard passwordReady else {
+            try throwIfInputRefused(since: inputBlocksBefore)
             throw AuthenticationError.missingPasswordField
         }
 
@@ -167,7 +173,7 @@ final class KakaoTalkAuthenticator {
             runner.log("auth: login button clicked")
         } else {
             runner.log("auth: falling back to Enter for submit")
-            runner.pressEnterKey()
+            try requirePosted(runner.pressEnterKey())
         }
 
         let loggedIn = runner.waitUntil(label: "auth completion", timeout: 10.0, pollInterval: 0.2) { [self] in
@@ -203,8 +209,21 @@ final class KakaoTalkAuthenticator {
             runner.log("\(label): refocus failed before typing fallback")
             return false
         }
-        runner.typeTextDirect(text, label: label)
-        return true
+        return runner.typeTextDirect(text, label: label)
+    }
+
+    /// Stops a keystroke sequence at the first event the frontmost guard refused, so a later
+    /// keystroke can never land in a different field than intended.
+    private func requirePosted(_ posted: Bool) throws {
+        guard posted else {
+            throw AuthenticationError.inputRefusedNotFrontmost
+        }
+    }
+
+    private func throwIfInputRefused(since baseline: Int) throws {
+        if KakaoTalkInputGuard.shared.blockedCount > baseline {
+            throw AuthenticationError.inputRefusedNotFrontmost
+        }
     }
 
     private func performBlindLogin(with credentials: DecryptedCredentials) throws {
@@ -213,17 +232,17 @@ final class KakaoTalkAuthenticator {
         kakao.activate()
         Thread.sleep(forTimeInterval: 0.25)
 
-        runner.pressCommandA()
+        try requirePosted(runner.pressCommandA())
         Thread.sleep(forTimeInterval: 0.05)
-        runner.typeTextDirect(credentials.identifier, label: "auth blind username")
+        try requirePosted(runner.typeTextDirect(credentials.identifier, label: "auth blind username"))
         Thread.sleep(forTimeInterval: 0.1)
 
-        runner.pressTabKey()
+        try requirePosted(runner.pressTabKey())
         Thread.sleep(forTimeInterval: 0.1)
 
-        runner.pressCommandA()
+        try requirePosted(runner.pressCommandA())
         Thread.sleep(forTimeInterval: 0.05)
-        runner.typeTextDirect(credentials.password, label: "auth blind password")
+        try requirePosted(runner.typeTextDirect(credentials.password, label: "auth blind password"))
         Thread.sleep(forTimeInterval: 0.1)
 
         kakao.activate()
@@ -231,21 +250,21 @@ final class KakaoTalkAuthenticator {
             runner.log("auth: blind submit clicked preferred login button")
         } else {
             runner.log("auth: direct login button unavailable; trying keyboard focus traversal")
-            pressBlindSubmitSequence([.tab], label: "auth blind submit tab-space")
+            try pressBlindSubmitSequence([.tab], label: "auth blind submit tab-space")
         }
 
         if !runner.waitUntil(label: "auth blind completion", timeout: 2.0, pollInterval: 0.2, evaluateAfterTimeout: false, condition: { [self] in
             isAuthenticated()
         }) {
             runner.log("auth: first blind submit did not complete; retrying with extended Tab traversal")
-            pressBlindSubmitSequence([.tab, .tab], label: "auth blind submit tab-tab-space")
+            try pressBlindSubmitSequence([.tab, .tab], label: "auth blind submit tab-tab-space")
         }
 
         if !runner.waitUntil(label: "auth blind completion retry", timeout: 1.2, pollInterval: 0.2, evaluateAfterTimeout: false, condition: { [self] in
             isAuthenticated()
         }) {
             runner.log("auth: keyboard traversal still pending; retrying with reverse traversal")
-            pressBlindSubmitSequence([.shiftTab], label: "auth blind submit shift-tab-space")
+            try pressBlindSubmitSequence([.shiftTab], label: "auth blind submit shift-tab-space")
         }
 
         let loggedIn = runner.waitUntil(label: "auth completion", timeout: 10.0, pollInterval: 0.2) { [self] in
@@ -649,8 +668,12 @@ final class KakaoTalkAuthenticator {
 
         // Type real key events: KakaoTalk keeps the confirm button disabled until it
         // observes input, so an AXValue-only write leaves nothing to submit.
-        runner.pressCommandA()
-        runner.typeTextDirect(passcode.value, label: "auth lock passcode")
+        let passcodeTyped = runner.pressCommandA() && runner.typeTextDirect(passcode.value, label: "auth lock passcode")
+        guard passcodeTyped else {
+            // Nothing was submitted, so no attempt was spent: keep the stored passcode.
+            clearFieldBestEffort(lock.passwordField, label: "auth lock passcode clear")
+            throw AuthenticationError.lockSubmitRefusedNotFrontmost
+        }
         Thread.sleep(forTimeInterval: 0.1)
 
         // The field echoes its contents over the accessibility API, so confirm the
@@ -914,18 +937,18 @@ final class KakaoTalkAuthenticator {
         case shiftTab
     }
 
-    private func pressBlindSubmitSequence(_ steps: [BlindSubmitStep], label: String) {
+    private func pressBlindSubmitSequence(_ steps: [BlindSubmitStep], label: String) throws {
         for step in steps {
             switch step {
             case .tab:
-                runner.pressTabKey()
+                try requirePosted(runner.pressTabKey())
             case .shiftTab:
-                runner.pressShiftTabKey()
+                try requirePosted(runner.pressShiftTabKey())
             }
             Thread.sleep(forTimeInterval: 0.08)
         }
         runner.log("\(label): submitting via Space on focused button")
-        runner.pressSpaceKey()
+        try requirePosted(runner.pressSpaceKey())
     }
 
     private func scoreButton(_ button: UIElement, relativeTo referenceFrame: CGRect? = nil) -> Int {

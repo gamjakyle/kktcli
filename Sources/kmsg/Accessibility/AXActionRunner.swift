@@ -207,8 +207,10 @@ struct AXActionRunner {
     }
 
     // Every helper below posts CGEvents to the HID tap, which deliver to whatever app is
-    // frontmost. Each post is preceded by a live KakaoTalkInputGuard check; when KakaoTalk is
-    // not frontmost the event is not posted and the helper returns false.
+    // frontmost. Each key press (and each click) is preceded by a live KakaoTalkInputGuard
+    // check; when KakaoTalk is not frontmost nothing is posted and the helper returns false.
+    // Once a key-down has been posted its key-up always follows immediately, so a press is
+    // never half-delivered and `true` means "the press reached the event system".
 
     @discardableResult
     func pressEscape() -> Bool {
@@ -276,7 +278,6 @@ struct AXActionRunner {
                 down.keyboardSetUnicodeString(stringLength: unicode.count, unicodeString: &unicode)
                 down.post(tap: .cghidEventTap)
             }
-            guard inputGuard.permitKeyboardEvent("typed text") else { return false }
             if let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
                 up.post(tap: .cghidEventTap)
             }
@@ -294,7 +295,6 @@ struct AXActionRunner {
             down.flags = flags
             down.post(tap: .cghidEventTap)
         }
-        guard inputGuard.permitKeyboardEvent("\(label) key") else { return false }
         if let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) {
             up.flags = flags
             up.post(tap: .cghidEventTap)
