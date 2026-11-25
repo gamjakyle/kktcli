@@ -88,7 +88,9 @@ public enum ChatRowAnalyzer {
     public static func summarize(_ nodes: [AXNodeSnapshot]) -> ChatRowSummary {
         var summary = ChatRowSummary()
         var unreadEvidence: [UnreadBadge] = []
-        var fallbackTitle: String?
+        // Plausible texts under identifiers this analyzer does not know, in row order. Used
+        // only when the known title/preview labels are missing (other KakaoTalk versions).
+        var unlabeledTexts: [(text: String, isStaticText: Bool)] = []
 
         for node in nodes {
             let text = node.text.kmsgTrimmed
@@ -140,15 +142,18 @@ public enum ChatRowAnalyzer {
                     unreadEvidence.append(.unknown(text))
                     continue
                 }
-                if fallbackTitle == nil, node.role == AXRoleName.staticText, isPlausibleFallbackTitle(text) {
-                    fallbackTitle = text
+                if isPlausibleUnlabeledText(text) {
+                    unlabeledTexts.append((text, node.role == AXRoleName.staticText))
                 }
             }
         }
 
-        if summary.title == nil, let fallbackTitle {
+        if summary.title == nil, let fallbackTitle = unlabeledTexts.first(where: { $0.isStaticText })?.text {
             summary.title = fallbackTitle
             summary.titleSource = .fallback
+        }
+        if summary.preview == nil, let fallbackPreview = unlabeledTexts.first(where: { $0.text != summary.title })?.text {
+            summary.preview = fallbackPreview
         }
 
         if let counted = unreadEvidence.first(where: { $0.count != nil }) {
@@ -170,7 +175,7 @@ public enum ChatRowAnalyzer {
         return .unknown(evidence)
     }
 
-    private static func isPlausibleFallbackTitle(_ text: String) -> Bool {
+    private static func isPlausibleUnlabeledText(_ text: String) -> Bool {
         if text.hasPrefix(KakaoText.unreadPrefix) { return false }
         if KakaoText.isCountLike(text) { return false }
         if KakaoText.memberCount(text) != nil { return false }

@@ -94,7 +94,9 @@ struct ChatsCommand: ParsableCommand {
             ChatListEntry(
                 title: snapshot.discovery.title,
                 chatID: chatID.isEmpty ? nil : chatID,
-                lastMessage: snapshot.discovery.lastMessage
+                lastMessage: snapshot.discovery.lastMessage,
+                hasUnread: snapshot.discovery.unread.isUnread,
+                unreadCount: snapshot.discovery.unread.count
             )
         }
         if json {
@@ -106,7 +108,15 @@ struct ChatsCommand: ParsableCommand {
         print("Found \(chats.count) chat(s):\n")
 
         for (index, chat) in chats.enumerated() {
-            print("[\(index + 1)] \(chat.title)")
+            let unreadMarker: String
+            if let unreadCount = chat.unreadCount {
+                unreadMarker = "  (unread \(unreadCount))"
+            } else if chat.hasUnread {
+                unreadMarker = "  (unread)"
+            } else {
+                unreadMarker = ""
+            }
+            print("[\(index + 1)] \(chat.title)\(unreadMarker)")
             print("    chat_id: \(chat.chatID ?? "unavailable")")
             if verbose, let msg = chat.lastMessage {
                 print("    └─ \(msg)")

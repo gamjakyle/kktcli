@@ -106,6 +106,7 @@ struct ChatRowAnalyzerTests {
         ]))
         #expect(summary.title == "가족")
         #expect(summary.titleSource == .fallback)
+        #expect(summary.preview == "저녁 뭐 먹어?")
         #expect(summary.unread == .count(2))
     }
 
