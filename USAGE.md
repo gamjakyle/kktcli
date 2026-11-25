@@ -216,7 +216,10 @@ and fail with `MAIN_WINDOW_NOT_VISIBLE`. Show KakaoTalk on the current desktop, 
 `--allow-activate`. When KakaoTalk is already in front, the main window is reopened (no app
 switch). The error's `details` give `kakao_frontmost`, `ax_window_count` and the window
 server's layer-0 KakaoTalk window counts (`cg_layer0_window_count`,
-`cg_layer0_offscreen_count`); they do not say which case it is.
+`cg_layer0_offscreen_count`); they do not say which case it is. Before any of this, a
+missing main window is looked for again for about 0.6 s with longer Accessibility timeouts,
+because a busy KakaoTalk (for example right after a window closed) can fail a single read;
+카카오톡 열기 is pressed only if it is still missing right before the press.
 
 **While you use KakaoTalk.** When KakaoTalk is in front, a window opened by 채팅방 열기 or
 전체보기 becomes the key window: what you are typing goes into that room, and Enter would
@@ -251,11 +254,14 @@ has no Accessibility label: kktcli recognises it as the unlabeled button right b
 that ends in "…" at about 500 characters.
 
 **Open-chat conversation lists (known limitation).** Some "오픈채팅, …" rows (1:1 open
-chats) do not open a chat but an untitled window listing the 1:1 conversations. kktcli
-recognises that window (a list table, no transcript and no input), presses nothing in it,
-closes it with its close button and fails with `OPEN_CHAT_LIST` (exit status 4); `details`
-give `conversation_count` and `conversations` (each title and time). Reading those
-conversations is not supported.
+chats) do not open a chat but an untitled window listing the 1:1 conversations, possibly
+none. kktcli recognises that window by its structure (header image, list table, no
+transcript and no input), presses nothing in it, closes it with its close button and fails
+with `OPEN_CHAT_LIST` (exit status 4); `details` give `opened` (`true`),
+`conversation_count` and `conversations` (each title and time). A row whose chat-list
+preview is exactly "대화 중인 오픈채팅방이 없습니다." is not opened at all: the same code
+with `opened: false` and `conversation_count: 0`. Reading those conversations is not
+supported.
 
 Recovery, only when the wanted row is missing:
 

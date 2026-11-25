@@ -87,8 +87,28 @@ class OpenChatListContractTests(unittest.TestCase):
         self.assertIn("exitCode: notAChatExitCode", opener)
         self.assertIn('details["conversation_count"]', opener)
         # Closed with its own close button (no title check), before the error is thrown.
-        failure = opener.index("throw Self.openChatListFailure(")
-        self.assertLess(opener.index("let details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)"), failure)
+        failure = opener.index("throw Self.openChatListFailure(row: row, list: list, rowCount: opened.listRowCount")
+        self.assertLess(opener.index("var details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)"), failure)
+        self.assertIn('details["opened"] = "true"', opener)
+
+    def test_empty_list_preview_is_a_shortcut_that_presses_nothing(self) -> None:
+        opener = read(OPENER)
+        body = opener[opener.index("func open(_ row: LocatedChatRow, access: ChatListAccess, skipUnread: Bool) throws -> OpenedRoom {"):]
+        shortcut = body.index("KakaoWindowClassifier.isEmptyOpenChatListRow(title: row.title, preview: row.summary.preview)")
+        self.assertLess(shortcut, body.index("try activity.waitUntilClear(.openChatRoom)"))
+        self.assertIn('details: ["opened": "false"]', body)
+
+    def test_a_missing_main_window_is_looked_for_again_before_any_reopen(self) -> None:
+        access = read(ACCESS)
+        confirm = access.index("if let main = locator.confirmMainWindow() {")
+        self.assertLess(confirm, access.index("MainWindowPolicy.decide("))
+        self.assertLess(confirm, access.index("locator.pressShowMainWindowMenuItem(beforePress:"))
+        self.assertIn("locator.mainWindow() == nil && activity.mayPressNow(.showMainWindow)", access)
+        locator = read(LOCATOR)
+        self.assertIn("func confirmMainWindow(within duration: TimeInterval = ChatListLocator.mainWindowRecheckDuration) -> UIElement? {", locator)
+        self.assertIn("case .alreadyVisible(let main):", locator)
+        self.assertIn("locator.access(in: mainWindow, patience: ChatListLocator.mainWindowRecheckDuration)", read(READ_COMMAND))
+        self.assertIn("if let main = ChatListLocator(kakao: kakao, runner: runner).confirmMainWindow() {", read(CHATS_COMMAND))
 
     def test_classification_only_reads(self) -> None:
         locator = read(LOCATOR)

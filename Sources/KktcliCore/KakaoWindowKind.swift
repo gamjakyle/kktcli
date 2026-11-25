@@ -5,8 +5,9 @@ public enum KakaoWindowKind: Equatable, Sendable {
     /// A chat: transcript (`_NS:32` holding an AXTable) or message input (`_NS:51`).
     case chat
     /// The list of 1:1 open-chat conversations that some "오픈채팅, …" rows open instead of
-    /// a chat (KakaoTalk 26.10.0): an untitled window whose scroll area `_NS:14` holds the
-    /// table `_NS:18`, one row per conversation with an `_NS:40` title.
+    /// a chat (KakaoTalk 26.10.0): an untitled window with the header image `_NS:81` and the
+    /// scroll area `_NS:14` holding the table `_NS:18`, one row per conversation with an
+    /// `_NS:40` title. The list can be empty (zero rows).
     case openChatList(OpenChatList)
     case unknown
 }
@@ -40,6 +41,17 @@ public enum KakaoWindowClassifier {
     public static let messageInputIdentifier = "_NS:51"
     public static let openChatListScrollAreaIdentifier = "_NS:14"
     public static let openChatListTableIdentifier = "_NS:18"
+    public static let openChatListHeaderImageIdentifier = "_NS:81"
+    /// Chat-list preview of an "오픈채팅, …" row whose conversation list is empty.
+    public static let emptyOpenChatListPreview = "대화 중인 오픈채팅방이 없습니다."
+    public static let openChatRowPrefix = "오픈채팅, "
+
+    /// Shortcut only (the window classification stays the real check): an open-chat row whose
+    /// preview says it has no conversations opens an empty conversation list, not a chat.
+    public static func isEmptyOpenChatListRow(title: String, preview: String?) -> Bool {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(openChatRowPrefix)
+            && preview?.trimmingCharacters(in: .whitespacesAndNewlines) == emptyOpenChatListPreview
+    }
 
     public static func classify(_ nodes: [AXNodeSnapshot]) -> KakaoWindowKind {
         if isChat(nodes) {
@@ -68,9 +80,13 @@ public enum KakaoWindowClassifier {
         return false
     }
 
-    /// The direct child scroll area `_NS:14` holding the table `_NS:18` whose rows carry an
-    /// `_NS:40` title; nil when there is none or no row shows a title.
+    /// The direct child scroll area `_NS:14` holding the table `_NS:18`, when the window also
+    /// has the header image `_NS:81` as a direct child (any number of rows, also zero), or when
+    /// at least one row shows an `_NS:40` title. Nil otherwise.
     static func openChatList(_ nodes: [AXNodeSnapshot]) -> OpenChatList? {
+        let hasHeaderImage = nodes.contains {
+            $0.depth == 1 && $0.role == AXRoleName.image && $0.identifier == openChatListHeaderImageIdentifier
+        }
         for index in nodes.indices {
             let scrollArea = nodes[index]
             guard scrollArea.depth == 1, scrollArea.role == AXRoleName.scrollArea,
@@ -84,7 +100,7 @@ public enum KakaoWindowClassifier {
                 let conversations = directChildren(of: tableIndex, in: nodes)
                     .filter { nodes[$0].role == AXRoleName.row }
                     .compactMap { conversation(inRow: $0, nodes: nodes) }
-                if !conversations.isEmpty {
+                if hasHeaderImage || !conversations.isEmpty {
                     return OpenChatList(conversations: conversations)
                 }
             }

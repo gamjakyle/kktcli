@@ -50,6 +50,38 @@ struct KakaoWindowClassifierTests {
         #expect(timed == .openChatList(OpenChatList(conversations: [.init(title: "홍길동", time: "오후 3:12")])))
     }
 
+    @Test("An empty open-chat list (zero rows, header image) is still the list")
+    func emptyOpenChatList() {
+        // Shaped like the live capture of a list with no conversations.
+        let empty = [
+            node("AXWindow", id: "_NS:8", depth: 0),
+            node("AXImage", id: "_NS:81", depth: 1),
+            node("AXScrollArea", id: "_NS:14", depth: 1),
+            node("AXTable", id: "_NS:18", depth: 2),
+            node("AXColumn", value: "AutomaticTableColumnIdentifier.0", depth: 3),
+            node("AXStaticText", value: "내 오픈채팅방 링크를 공유하고\n대화를 시작해 보세요.", depth: 1),
+            node("AXButton", id: "_NS:167", desc: "버튼", depth: 1),
+            node("AXButton", depth: 1),
+            node("AXButton", depth: 1),
+        ]
+        #expect(KakaoWindowClassifier.classify(empty) == .openChatList(OpenChatList(conversations: [])))
+        // Without the header image an empty table proves nothing.
+        let noImage = empty.filter { $0.identifier != "_NS:81" }
+        #expect(KakaoWindowClassifier.classify(noImage) == .unknown)
+        // Never with a transcript or an input anywhere.
+        #expect(KakaoWindowClassifier.classify(empty + [node("AXTextArea", id: "_NS:51", depth: 1)]) == .chat)
+        #expect(KakaoWindowClassifier.classify(empty + [node("AXScrollArea", id: "_NS:32", depth: 1)]) == .unknown)
+    }
+
+    @Test("The empty-list preview is only a shortcut for open-chat rows")
+    func emptyListPreview() {
+        #expect(KakaoWindowClassifier.isEmptyOpenChatListRow(title: "오픈채팅, 새벽 산책", preview: "대화 중인 오픈채팅방이 없습니다."))
+        #expect(KakaoWindowClassifier.isEmptyOpenChatListRow(title: "오픈채팅, 새벽 산책", preview: " 대화 중인 오픈채팅방이 없습니다.\n"))
+        #expect(!KakaoWindowClassifier.isEmptyOpenChatListRow(title: "새벽 산책", preview: "대화 중인 오픈채팅방이 없습니다."))
+        #expect(!KakaoWindowClassifier.isEmptyOpenChatListRow(title: "오픈채팅, 새벽 산책", preview: "대화 중인 오픈채팅방이 없습니다. 지금"))
+        #expect(!KakaoWindowClassifier.isEmptyOpenChatListRow(title: "오픈채팅, 새벽 산책", preview: nil))
+    }
+
     @Test("A transcript or a message input makes it a chat, even next to a list")
     func chats() {
         let transcript = [
@@ -67,8 +99,11 @@ struct KakaoWindowClassifierTests {
     @Test("Anything else is unknown: no rows, no titles, wrong identifiers, a transcript without table")
     func unknown() {
         #expect(KakaoWindowClassifier.classify([node("AXWindow", depth: 0)]) == .unknown)
-        #expect(KakaoWindowClassifier.classify(openChatListWindow(rows: [])) == .unknown)
-        #expect(KakaoWindowClassifier.classify(openChatListWindow(rows: [("", nil)])) == .unknown)
+        // Without the header image, rows without titles prove nothing.
+        let untitledRowsNoImage = openChatListWindow(rows: [("", nil)]).filter { $0.identifier != "_NS:81" }
+        #expect(KakaoWindowClassifier.classify(untitledRowsNoImage) == .unknown)
+        // With the header image the structure alone decides (titles may be empty).
+        #expect(KakaoWindowClassifier.classify(openChatListWindow(rows: [("", nil)])) == .openChatList(OpenChatList(conversations: [])))
         let otherTable = [
             node("AXWindow", depth: 0),
             node("AXScrollArea", id: "_NS:14", depth: 1),

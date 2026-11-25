@@ -18,7 +18,7 @@ class OpenChatWindowContractTests(unittest.TestCase):
 
     def test_a_failed_open_closes_every_window_that_appeared_after_the_press(self) -> None:
         opener = OPENER.read_text(encoding="utf-8")
-        self.assertIn("let details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)", opener)
+        self.assertIn("var details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)", opener)
         self.assertIn('"unexpected_new_windows"', opener)
         self.assertIn('details["closed_new_windows"]', opener)
         self.assertIn('details["left_open_windows"]', opener)

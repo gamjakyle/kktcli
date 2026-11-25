@@ -48,6 +48,13 @@ struct ChatRoomMenuOpener {
     let activity: UserActivityGuard
 
     func open(_ row: LocatedChatRow, access: ChatListAccess, skipUnread: Bool) throws -> OpenedRoom {
+        // Shortcut, nothing pressed: the preview says this open chat has no conversations, so
+        // the row would only open an empty conversation list. The window check below stays
+        // the real test for every other row.
+        if KakaoWindowClassifier.isEmptyOpenChatListRow(title: row.title, preview: row.summary.preview) {
+            runner.log("read: '\(row.title)' shows the empty open-chat list preview; not opened")
+            throw Self.openChatListFailure(row: row, list: OpenChatList(conversations: []), rowCount: 0, details: ["opened": "false"])
+        }
         while true {
             try activity.waitUntilClear(.openChatRoom)
             if let opened = try openOnce(row, access: access, skipUnread: skipUnread) {
@@ -136,8 +143,9 @@ struct ChatRoomMenuOpener {
         if menuIsOpen(on: cell) {
             cancel(menu)
         }
-        let details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)
+        var details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)
         if let list = opened.openChatList {
+            details["opened"] = "true"
             throw Self.openChatListFailure(row: row, list: list, rowCount: opened.listRowCount, details: details)
         }
         throw ReadFailure(

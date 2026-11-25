@@ -7,13 +7,27 @@ import KktcliCore
 /// --allow-activate. Each 카카오톡 열기 press first waits for an idle user
 /// (`UserActivityGuard`) and is re-checked right before the press.
 struct MainWindowAccess {
+    enum ReopenOutcome {
+        /// The main window was there after all (found on the patient re-check); nothing pressed.
+        case alreadyVisible(UIElement)
+        case pressed
+        /// The menu item was unavailable or the press failed.
+        case unavailable
+    }
+
     let runner: AXActionRunner
     let activity: UserActivityGuard
     let allowActivate: Bool
 
-    /// Presses 카카오톡 열기 when the policy allows it; throws MAIN_WINDOW_NOT_VISIBLE (nothing
-    /// pressed) when it does not. Returns false when the menu item was unavailable.
-    func reopen(kakao: KakaoTalkApp, locator: ChatListLocator) throws -> Bool {
+    /// The main window is looked for again first (`ChatListLocator.confirmMainWindow`: a few
+    /// hundred ms, longer AX timeouts), so a transient read failure never leads to a press.
+    /// Then 카카오톡 열기 is pressed when the policy allows it, and only while the main window
+    /// is still missing right before the press; MAIN_WINDOW_NOT_VISIBLE (nothing pressed) when
+    /// the policy does not allow it.
+    func reopen(kakao: KakaoTalkApp, locator: ChatListLocator) throws -> ReopenOutcome {
+        if let main = locator.confirmMainWindow() {
+            return .alreadyVisible(main)
+        }
         let evidence = KakaoTalkInputGuard.shared.currentEvidence()
         let frontmost = FrontmostPolicy.keyboard(evidence).allowed
         guard MainWindowPolicy.decide(kakaoTalkFrontmost: frontmost, allowActivate: allowActivate) == .reopen else {
@@ -21,11 +35,17 @@ struct MainWindowAccess {
         }
         while true {
             try activity.waitUntilClear(.showMainWindow)
-            switch locator.pressShowMainWindowMenuItem(beforePress: { activity.mayPressNow(.showMainWindow) }) {
+            if let main = locator.mainWindow() {
+                return .alreadyVisible(main)
+            }
+            let press = locator.pressShowMainWindowMenuItem(beforePress: {
+                locator.mainWindow() == nil && activity.mayPressNow(.showMainWindow)
+            })
+            switch press {
             case .pressed:
-                return true
+                return .pressed
             case .unavailable:
-                return false
+                return .unavailable
             case .deferred:
                 continue
             }

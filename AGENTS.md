@@ -60,6 +60,11 @@ untitled AXStandardWindow, never press anything in it):
 ├── AXImage _NS:81 header, AXButton _NS:167 "버튼"
 └── AXScrollArea _NS:14 > AXTable _NS:18 > AXRow > AXCell
     _NS:11 "프로필", _NS:40 title, _NS:69 time, _NS:87 preview
+    (may have zero rows: then only an AXColumn; the row's chat-list preview reads
+    "대화 중인 오픈채팅방이 없습니다.")
+
+A busy KakaoTalk can fail single AX reads (0.25 s default timeout), e.g. right after a
+window closed: re-check before concluding a window is missing.
 
 Chat window (title = room name; team, self and open chats drop the "팀채팅, ",
 "나와의 채팅, ", "오픈채팅, " row prefix; open chats may have an EMPTY title):

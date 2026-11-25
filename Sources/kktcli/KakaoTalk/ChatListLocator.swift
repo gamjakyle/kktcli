@@ -86,7 +86,10 @@ struct ChatListLocator {
     }
 
     func mainWindow() -> UIElement? {
-        let windows = kakao.windows
+        mainWindow(among: kakao.windows)
+    }
+
+    private func mainWindow(among windows: [UIElement]) -> UIElement? {
         if let main = windows.first(where: { $0.identifier == Self.mainWindowIdentifier }) {
             return main
         }
@@ -98,6 +101,65 @@ struct ChatListLocator {
             }
             return !window.findAll(where: { $0.identifier == "chatrooms" }, limit: 1, maxNodes: 160).isEmpty
         }
+    }
+
+    /// How long a missing main window is looked for again before 카카오톡 열기 may be pressed.
+    static let mainWindowRecheckDuration: TimeInterval = 0.6
+    /// AX messaging timeout for that re-check (the process default is 0.25 s).
+    private static let patientMessagingTimeout: Float = 1.0
+
+    /// The main window, looked for again for up to `duration` with a longer AX messaging
+    /// timeout on the application and on each window. Right after a KakaoTalk window closes,
+    /// KakaoTalk may not answer within the 0.25 s default, and a failed read looks exactly like
+    /// a missing main window. Nil only when it stays missing; the trace then says what
+    /// Accessibility reported.
+    func confirmMainWindow(within duration: TimeInterval = ChatListLocator.mainWindowRecheckDuration) -> UIElement? {
+        let started = Date()
+        let deadline = started.addingTimeInterval(duration)
+        AXNodeReader.setMessagingTimeout(kakao.applicationElement.axElement, seconds: Self.patientMessagingTimeout)
+        var attempts = 0
+        repeat {
+            attempts += 1
+            let windows = kakao.windows
+            for window in windows {
+                AXNodeReader.setMessagingTimeout(window.axElement, seconds: Self.patientMessagingTimeout)
+            }
+            if let main = mainWindow(among: windows) {
+                runner.log("main window: found again after \(Int(Date().timeIntervalSince(started) * 1000)) ms (attempt \(attempts)); \(MainWindowMenuItem.title) not needed")
+                return main
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline && !ReadInterruption.requested
+        runner.log("main window: still missing after \(Int(Date().timeIntervalSince(started) * 1000)) ms (\(attempts) attempts); \(windowDiagnostics())")
+        return nil
+    }
+
+    /// What Accessibility reports about KakaoTalk's windows (trace only).
+    func windowDiagnostics() -> String {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(kakao.applicationElement.axElement, kAXWindowsAttribute as CFString, &value)
+        let windows = (value as? [AXUIElement]) ?? []
+        let described = windows.prefix(10).map { element -> String in
+            AXNodeReader.setMessagingTimeout(element, seconds: Self.patientMessagingTimeout)
+            let snapshot = AXNodeReader.read(element).snapshot
+            return "\(snapshot.role)/\(snapshot.identifier.isEmpty ? "-" : snapshot.identifier)/'\(snapshot.title ?? "")'" + (snapshot.readFailed ? " (read failed)" : "")
+        }
+        return "AXWindows status=\(status.rawValue) count=\(windows.count) [\(described.joined(separator: ", "))]"
+    }
+
+    /// The chat-list table of `window`, looked for again for up to `duration` (a busy KakaoTalk
+    /// can fail a single read right after another window closed).
+    func access(in window: UIElement, patience duration: TimeInterval) -> ChatListAccess? {
+        let deadline = Date().addingTimeInterval(duration)
+        AXNodeReader.setMessagingTimeout(window.axElement, seconds: Self.patientMessagingTimeout)
+        repeat {
+            if let access = access(in: window) {
+                return access
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline && !ReadInterruption.requested
+        runner.log("main window: chat list table still missing after \(Int(duration * 1000)) ms")
+        return nil
     }
 
     /// Returns the main window, reopening it once (`open KakaoTalk.app`, as the legacy
@@ -115,9 +177,17 @@ struct ChatListLocator {
         if let main = mainWindow() {
             return (main, nil)
         }
-        let pressed = try access.reopen(kakao: kakao, locator: self)
-        if pressed, let main = waitForMainWindow(timeout: 3.0) {
-            return (main, .openedViaMenuItem)
+        let pressed: Bool
+        switch try access.reopen(kakao: kakao, locator: self) {
+        case .alreadyVisible(let main):
+            return (main, nil)
+        case .pressed:
+            if let main = waitForMainWindow(timeout: 3.0) {
+                return (main, .openedViaMenuItem)
+            }
+            pressed = true
+        case .unavailable:
+            pressed = false
         }
         guard allowOpenCommand else {
             throw ReadFailure(

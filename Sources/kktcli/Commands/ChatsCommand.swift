@@ -103,7 +103,7 @@ struct ChatsCommand: ParsableCommand {
         if KakaoTalkApp.isRunning, let early = try? KakaoTalkApp(autoLaunch: false) {
             let earlyLocator = ChatListLocator(kakao: early, runner: runner)
             if earlyLocator.mainWindow() == nil,
-               try mainWindowAccess.reopen(kakao: early, locator: earlyLocator),
+               case .pressed = try mainWindowAccess.reopen(kakao: early, locator: earlyLocator),
                earlyLocator.waitForMainWindow(timeout: 3.0) != nil
             {
                 FileHandle.standardError.write(Data("Note: KakaoTalk's main window was reopened (\(MainWindowMenuItem.title)).\n".utf8))
@@ -180,6 +180,10 @@ struct ChatsCommand: ParsableCommand {
     /// The old fallback (activate, relaunch, `open KakaoTalk.app`) brings KakaoTalk to the
     /// front, so it runs only as `MainWindowPolicy` allows and after the user-activity wait.
     private func activatingFallback(kakao: KakaoTalkApp, access: MainWindowAccess, runner: AXActionRunner) throws -> UIElement? {
+        // A transient read failure must not lead to activating KakaoTalk.
+        if let main = ChatListLocator(kakao: kakao, runner: runner).confirmMainWindow() {
+            return main
+        }
         let evidence = KakaoTalkInputGuard.shared.currentEvidence()
         let frontmost = FrontmostPolicy.keyboard(evidence).allowed
         guard MainWindowPolicy.decide(kakaoTalkFrontmost: frontmost, allowActivate: allowActivate) == .reopen else {

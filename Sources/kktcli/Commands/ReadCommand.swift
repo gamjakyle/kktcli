@@ -369,7 +369,7 @@ struct ReadCommand: ParsableCommand {
         if !backgroundSafe, KakaoTalkApp.isRunning, let early = try? KakaoTalkApp(autoLaunch: false) {
             let earlyLocator = ChatListLocator(kakao: early, runner: runner)
             if earlyLocator.mainWindow() == nil,
-               try mainWindowAccess.reopen(kakao: early, locator: earlyLocator),
+               case .pressed = try mainWindowAccess.reopen(kakao: early, locator: earlyLocator),
                earlyLocator.waitForMainWindow(timeout: 3.0) != nil
             {
                 mainWindowAction = .openedViaMenuItem
@@ -548,7 +548,9 @@ struct ReadCommand: ParsableCommand {
 
         // 2. The chat list, opened through the row's context menu.
         let (mainWindow, mainWindowAction) = try locator.requireMainWindow(allowOpenCommand: deepRecovery, access: session.mainWindowAccess)
+        // A missing table is looked for again before list recovery presses anything.
         var access = locator.access(in: mainWindow)
+            ?? locator.access(in: mainWindow, patience: ChatListLocator.mainWindowRecheckDuration)
         var listRecovery: ChatListRecoveryReport?
 
         // Only when the wanted row is missing: a leftover search filter may hide it. Restores the
