@@ -18,7 +18,9 @@ public struct MCPReadRequest: Equatable, Sendable {
     public var backgroundSafe: Bool
     public var keepWindow: Bool
     public var traceAX: Bool
-    public var allowUnread: Bool
+    /// `--skip-unread`: leave a room unopened when its chat-list row shows unread messages.
+    /// (The tool's old `allow_unread` argument is accepted and ignored by the server.)
+    public var skipUnread: Bool
     public var includeSystem: Bool
     /// nil = automatic (only when fewer than `limit` messages are loaded; the CLI keeps it
     /// inside the default timeout), true = `--scrollback`, false = `--no-scrollback`.
@@ -34,7 +36,7 @@ public struct MCPReadRequest: Equatable, Sendable {
         backgroundSafe: Bool = false,
         keepWindow: Bool = false,
         traceAX: Bool = false,
-        allowUnread: Bool = false,
+        skipUnread: Bool = false,
         includeSystem: Bool = false,
         scrollback: Bool? = nil,
         scrollbackSeconds: Double? = nil
@@ -47,7 +49,7 @@ public struct MCPReadRequest: Equatable, Sendable {
         self.backgroundSafe = backgroundSafe
         self.keepWindow = keepWindow
         self.traceAX = traceAX
-        self.allowUnread = allowUnread
+        self.skipUnread = skipUnread
         self.includeSystem = includeSystem
         self.scrollback = scrollback
         self.scrollbackSeconds = scrollbackSeconds
@@ -69,7 +71,7 @@ public struct MCPReadRequest: Equatable, Sendable {
         if backgroundSafe { arguments.append("--background-safe") }
         if keepWindow { arguments.append("--keep-window") }
         if traceAX { arguments.append("--trace-ax") }
-        if allowUnread { arguments.append("--allow-unread") }
+        if skipUnread { arguments.append("--skip-unread") }
         if includeSystem { arguments.append("--include-system") }
         switch scrollback {
         case .some(true):
@@ -164,9 +166,9 @@ public enum MCPErrorMapping {
         case "KKTCLI_BIN_NOT_FOUND":
             return "The kktcli binary could not be launched; check that it exists and is executable."
         case "UNREAD_REFUSED":
-            return "The room shows unread messages; opening it would send read receipts. Retry with allow_unread=true only if the user agreed."
+            return "skip_unread=true left the room unopened because it shows unread messages. Reading it with skip_unread=false (the default) opens it, which sends read receipts like opening it by hand."
         case "UNREAD_UNVERIFIED":
-            return "The chat-list row could not be read completely, so unread messages cannot be ruled out. Retry, or pass allow_unread=true only if the user agreed."
+            return "skip_unread=true left the room unopened because its chat-list row could not be read completely. Retry, or read it with skip_unread=false (the default), which sends read receipts if there are unread messages."
         case "CHAT_NOT_IN_LIST":
             return "No chat-list row matched. Check the exact name or chat_id with `kktcli chats`."
         case "AMBIGUOUS_CHAT":

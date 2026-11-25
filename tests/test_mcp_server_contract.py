@@ -36,10 +36,17 @@ class MCPServerContractTests(unittest.TestCase):
     def test_read_tool_exposes_unread_and_scrollback_options(self) -> None:
         source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
         mapping = MCP_MAPPING.read_text(encoding="utf-8")
-        for option in ('"allow_unread"', '"scrollback"', '"scrollback_timeout"', '"include_system"'):
+        for option in ('"skip_unread"', '"scrollback"', '"scrollback_timeout"', '"include_system"'):
             self.assertIn(option, source)
-        for flag in ('"--allow-unread"', '"--scrollback"', '"--no-scrollback"', '"--scrollback-timeout"'):
+        for flag in ('"--skip-unread"', '"--scrollback"', '"--no-scrollback"', '"--scrollback-timeout"'):
             self.assertIn(flag, mapping)
+        # Unread rooms are opened by default; allow_unread stays in the schema (the schema has
+        # additionalProperties: false) but is ignored and never turned into a flag.
+        self.assertIn('skipUnread: boolValue(arguments["skip_unread"], defaultValue: false)', source)
+        self.assertIn('"allow_unread"', source)
+        self.assertIn("Deprecated and ignored", source)
+        self.assertNotIn('arguments["allow_unread"]', source)
+        self.assertNotIn('"--allow-unread"', mapping)
         # The 8 s call timeout (15 s with deep recovery) is kept and only extended for an
         # explicit scrollback request.
         self.assertIn("defaultTimeout: Double = 8", mapping)

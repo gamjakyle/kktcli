@@ -257,7 +257,7 @@ private final class KktcliMCPServer {
                         "name": "kktcli",
                         "version": serverVersion,
                     ],
-                    "instructions": "Use kktcli_read for read-only operations. It refuses rooms with unread messages (UNREAD_REFUSED) because opening them sends read receipts; pass allow_unread=true only when the user agreed. Use kktcli_send and kktcli_send_image only when the user explicitly asked to send, with confirm=false (or omitted); confirm=true returns CONFIRMATION_REQUIRED without sending. Never send in bulk.",
+                    "instructions": "Use kktcli_read for read-only operations. It opens rooms with unread messages like any other, which sends read receipts exactly as opening them by hand; pass skip_unread=true to leave such rooms unopened (UNREAD_REFUSED). meta.read.unread_before / unread_after / marked_read report the chat-list badge before and after. Use kktcli_send and kktcli_send_image only when the user explicitly asked to send, with confirm=false (or omitted); confirm=true returns CONFIRMATION_REQUIRED without sending. Never send in bulk.",
                     "meta": [
                         "startup_check": startupCheck,
                     ],
@@ -304,17 +304,21 @@ private final class KktcliMCPServer {
         [
             [
                 "name": "kktcli_read",
-                "description": "Read recent KakaoTalk messages from a chat via kktcli. Opens a closed room through the chat list's context menu without keystrokes; refuses rooms with unread messages unless allow_unread=true.",
+                "description": "Read recent KakaoTalk messages from a chat via kktcli. Opens a closed room through the chat list's context menu without keystrokes. A room with unread messages is opened too, which sends read receipts like opening it by hand; skip_unread=true leaves such rooms unopened.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
                         "chat": ["type": "string", "description": "Chat room or user name"],
                         "chat_id": ["type": "string", "description": "Synthetic chat_id from kktcli chats"],
                         "limit": ["type": "integer", "minimum": 1, "maximum": MCPReadRequest.maximumLimit, "default": 20],
-                        "allow_unread": [
+                        "skip_unread": [
                             "type": "boolean",
                             "default": false,
-                            "description": "Open the room even if its chat-list row shows unread messages. Opening sends read receipts; only with the user's consent.",
+                            "description": "Do not open the room if its chat-list row shows unread messages (fails with UNREAD_REFUSED instead), so no read receipts are sent.",
+                        ],
+                        "allow_unread": [
+                            "type": "boolean",
+                            "description": "Deprecated and ignored: rooms with unread messages are opened by default; see skip_unread.",
                         ],
                         "scrollback": [
                             "type": "boolean",
@@ -532,7 +536,8 @@ private final class KktcliMCPServer {
             backgroundSafe: boolValue(arguments["background_safe"], defaultValue: backgroundSafeDefault),
             keepWindow: boolValue(arguments["keep_window"], defaultValue: false),
             traceAX: boolValue(arguments["trace_ax"], defaultValue: traceDefault),
-            allowUnread: boolValue(arguments["allow_unread"], defaultValue: false),
+            // allow_unread is deprecated and ignored: unread rooms are opened by default.
+            skipUnread: boolValue(arguments["skip_unread"], defaultValue: false),
             includeSystem: boolValue(arguments["include_system"], defaultValue: false),
             scrollback: optionalBoolValue(arguments["scrollback"]),
             scrollbackSeconds: scrollbackSeconds
