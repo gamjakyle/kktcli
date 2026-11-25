@@ -28,6 +28,29 @@ enum ChatWindowInteractionMode {
     case backgroundSafe
 }
 
+enum WindowCloseOutcome: Equatable {
+    case closed
+    case closeButtonMissing
+    case pressFailed(Int32)
+    case stillOpen
+    case titleMismatch(String)
+
+    var code: String {
+        switch self {
+        case .closed:
+            return "closed"
+        case .closeButtonMissing:
+            return "close_button_missing"
+        case .pressFailed:
+            return "close_press_failed"
+        case .stillOpen:
+            return "still_open"
+        case .titleMismatch:
+            return "title_mismatch"
+        }
+    }
+}
+
 struct ChatWindowResolution {
     let window: UIElement
     let method: ChatWindowResolutionMethod
@@ -155,38 +178,40 @@ struct ChatWindowResolver {
         return ChatWindowResolution(window: chatWindow, method: .openedViaSearch)
     }
 
+    /// Closes `window` by pressing its own AXCloseButton (KakaoTalk windows support no AXClose).
+    /// There is deliberately no other fallback: the previous "first button in the window" guess
+    /// could hit a banner or profile button next to 보이스톡/페이스톡, and Cmd-W goes to whatever
+    /// window is key. When the close button is missing the window is left open.
     @discardableResult
     func closeWindow(_ window: UIElement) -> Bool {
-        let closeAction = "AXClose"
+        closeWindowViaCloseButton(window, expectedTitle: nil) == .closed
+    }
 
-        kakao.activate()
-        _ = tryRaiseWindow(window)
-
-        if supportsAction(closeAction, on: window) {
-            do {
-                try window.performAction(closeAction)
-                if waitForWindowClosed(window, label: "close via AXClose") {
-                    return true
-                }
-            } catch {
-                runner.log("close window: AXClose failed (\(error))")
+    /// Like `closeWindow`, but first checks that the window still shows `expectedTitle` and
+    /// reports why a window was left open.
+    func closeWindowViaCloseButton(_ window: UIElement, expectedTitle: String?) -> WindowCloseOutcome {
+        if let expectedTitle {
+            let currentTitle = window.title ?? ""
+            guard ChatTextNormalizer.normalize(currentTitle) == ChatTextNormalizer.normalize(expectedTitle) else {
+                runner.log("close window: title '\(currentTitle)' does not match '\(expectedTitle)'; leaving it open")
+                return .titleMismatch(currentTitle)
             }
         }
 
-        if let closeButton = findCloseButton(in: window) {
-            do {
-                try closeButton.press()
-                if waitForWindowClosed(window, label: "close via button") {
-                    return true
-                }
-            } catch {
-                runner.log("close window: button press failed (\(error))")
-            }
+        guard let closeButton = AXNodeReader.elementAttribute(window.axElement, kAXCloseButtonAttribute) else {
+            runner.log("close window: no AXCloseButton; leaving the window open")
+            return .closeButtonMissing
         }
 
-        runner.log("close window: fallback via cmd+w")
-        runner.pressCommandW()
-        return waitForWindowClosed(window, label: "close via cmd+w")
+        let status = AXNodeReader.perform(closeButton, kAXPressAction)
+        if waitForWindowClosed(window, label: "close via AXCloseButton") {
+            return .closed
+        }
+        if status != .success {
+            runner.log("close window: AXCloseButton press failed (AXError \(status.rawValue))")
+            return .pressFailed(status.rawValue)
+        }
+        return .stillOpen
     }
 
     private func resolveExistingWindowOnly(query: String) throws -> ChatWindowResolution {
@@ -1319,22 +1344,6 @@ struct ChatWindowResolver {
             }
         }
         return false
-    }
-
-    private func findCloseButton(in window: UIElement) -> UIElement? {
-        let buttons = window.findAll(role: kAXButtonRole, limit: 6, maxNodes: 80)
-        if let match = buttons.first(where: { button in
-            let joined = [
-                button.identifier ?? "",
-                button.title ?? "",
-                button.axDescription ?? "",
-            ].joined(separator: " ").lowercased()
-            return joined.contains("close") || joined.contains("닫기")
-        }) {
-            return match
-        }
-
-        return buttons.first
     }
 
     private func waitForWindowClosed(_ window: UIElement, label: String) -> Bool {
