@@ -1,6 +1,7 @@
 import ArgumentParser
 import Darwin
 import Foundation
+import KktcliCore
 
 private typealias JSONDict = [String: Any]
 
@@ -256,7 +257,7 @@ private final class KktcliMCPServer {
                         "name": "kktcli",
                         "version": serverVersion,
                     ],
-                    "instructions": "Use kktcli_read for read-only operations. Use kktcli_send and kktcli_send_image with confirm=false (or omitted) for sending. Use confirm=true to intentionally require a confirmation step.",
+                    "instructions": "Use kktcli_read for read-only operations. It refuses rooms with unread messages (UNREAD_REFUSED) because opening them sends read receipts; pass allow_unread=true only when the user agreed. Use kktcli_send and kktcli_send_image only when the user explicitly asked to send, with confirm=false (or omitted); confirm=true returns CONFIRMATION_REQUIRED without sending. Never send in bulk.",
                     "meta": [
                         "startup_check": startupCheck,
                     ],
@@ -303,13 +304,33 @@ private final class KktcliMCPServer {
         [
             [
                 "name": "kktcli_read",
-                "description": "Read recent KakaoTalk messages from a chat via kktcli.",
+                "description": "Read recent KakaoTalk messages from a chat via kktcli. Opens a closed room through the chat list's context menu without keystrokes; refuses rooms with unread messages unless allow_unread=true.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
                         "chat": ["type": "string", "description": "Chat room or user name"],
                         "chat_id": ["type": "string", "description": "Synthetic chat_id from kktcli chats"],
-                        "limit": ["type": "integer", "minimum": 1, "maximum": 100, "default": 20],
+                        "limit": ["type": "integer", "minimum": 1, "maximum": MCPReadRequest.maximumLimit, "default": 20],
+                        "allow_unread": [
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Open the room even if its chat-list row shows unread messages. Opening sends read receipts; only with the user's consent.",
+                        ],
+                        "scrollback": [
+                            "type": "boolean",
+                            "description": "true: load older messages until limit is reached (within scrollback_timeout; the call timeout is extended accordingly). false: never scroll. Omit for automatic scrollback, which stays within the default timeout.",
+                        ],
+                        "scrollback_timeout": [
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": MCPReadRequest.maximumScrollbackSeconds,
+                            "description": "Seconds for loading older messages (kktcli default 4).",
+                        ],
+                        "include_system": [
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Include system messages such as joins and notices",
+                        ],
                         "deep_recovery": [
                             "type": "boolean",
                             "default": deepRecoveryDefault,
@@ -468,18 +489,13 @@ private final class KktcliMCPServer {
             return errorPayload(
                 code: "INVALID_ARGUMENT",
                 message: "limit must be an integer",
-                hint: "Use integer range 1..100 for limit.",
+                hint: "Use integer range 1..\(MCPReadRequest.maximumLimit) for limit.",
                 rawStdout: "",
                 rawStderr: "",
                 latencyMs: 0
             )
         }
 
-        let boundedLimit = max(1, min(limit, 100))
-        let deepRecovery = boolValue(arguments["deep_recovery"], defaultValue: deepRecoveryDefault)
-        let backgroundSafe = boolValue(arguments["background_safe"], defaultValue: backgroundSafeDefault)
-        let keepWindow = boolValue(arguments["keep_window"], defaultValue: false)
-        let traceAX = boolValue(arguments["trace_ax"], defaultValue: traceDefault)
         guard let layout = Self.validReadLayout(arguments["layout"] as? String ?? readLayoutDefault) else {
             return errorPayload(
                 code: "INVALID_ARGUMENT",
@@ -491,26 +507,48 @@ private final class KktcliMCPServer {
             )
         }
 
-        var command = ["read"]
-        if !chatID.isEmpty {
-            command.append(contentsOf: ["--chat-id", chatID])
-        } else {
-            command.append(chat)
+        var scrollbackSeconds: Double?
+        if let raw = arguments["scrollback_timeout"], !(raw is NSNull) {
+            // JSON booleans are NSNumbers too; only accept real numbers.
+            guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+                return errorPayload(
+                    code: "INVALID_ARGUMENT",
+                    message: "scrollback_timeout must be a number of seconds",
+                    hint: "Use a number between 0 and \(Int(MCPReadRequest.maximumScrollbackSeconds)).",
+                    rawStdout: "",
+                    rawStderr: "",
+                    latencyMs: 0
+                )
+            }
+            scrollbackSeconds = number.doubleValue
         }
-        command.append(contentsOf: ["--json", "--limit", String(boundedLimit), "--layout", layout])
-        if deepRecovery { command.append("--deep-recovery") }
-        if backgroundSafe { command.append("--background-safe") }
-        if keepWindow { command.append("--keep-window") }
-        if traceAX { command.append("--trace-ax") }
 
-        let timeoutSec = deepRecovery ? 15.0 : 8.0
-        var first = runner.run(command, timeoutSec: timeoutSec)
+        let request = MCPReadRequest(
+            chat: chat,
+            chatID: chatID,
+            limit: limit,
+            layout: layout,
+            deepRecovery: boolValue(arguments["deep_recovery"], defaultValue: deepRecoveryDefault),
+            backgroundSafe: boolValue(arguments["background_safe"], defaultValue: backgroundSafeDefault),
+            keepWindow: boolValue(arguments["keep_window"], defaultValue: false),
+            traceAX: boolValue(arguments["trace_ax"], defaultValue: traceDefault),
+            allowUnread: boolValue(arguments["allow_unread"], defaultValue: false),
+            includeSystem: boolValue(arguments["include_system"], defaultValue: false),
+            scrollback: optionalBoolValue(arguments["scrollback"]),
+            scrollbackSeconds: scrollbackSeconds
+        )
+        let backgroundSafe = request.backgroundSafe
+        let traceAX = request.traceAX
+
+        // `kktcli read` itself keeps automatic work inside the default timeout and closes the
+        // window it opened when it is stopped, so there is no retry here.
+        let first = runner.run(request.arguments, timeoutSec: request.timeout)
 
         if first.timedOut {
             return errorPayload(
                 code: "PROCESS_TIMEOUT",
-                message: "kktcli read timed out",
-                hint: "Increase stability (keep KakaoTalk open/focused) and retry.",
+                message: "kktcli read timed out after \(Int(request.timeout)) s",
+                hint: "Retry; KakaoTalk may be busy.",
                 rawStdout: first.stdout,
                 rawStderr: first.stderr,
                 latencyMs: first.latencyMs
@@ -518,35 +556,17 @@ private final class KktcliMCPServer {
         }
 
         if first.returncode != 0 {
-            let combined = "\(first.stdout)\n\(first.stderr)"
-            let code = extractErrorCode(combined)
-            if code == "CHAT_NOT_FOUND" && !deepRecovery && !backgroundSafe {
-                var retryCommand = command
-                retryCommand.append("--deep-recovery")
-                let retry = runner.run(retryCommand, timeoutSec: 15.0)
-                if retry.returncode == 0 && !retry.timedOut {
-                    first = retry
-                } else {
-                    let retryCode = extractErrorCode("\(retry.stdout)\n\(retry.stderr)")
-                    return errorPayload(
-                        code: retryCode,
-                        message: "kktcli read failed after deep-recovery retry",
-                        hint: mapHint(retryCode),
-                        rawStdout: retry.stdout,
-                        rawStderr: retry.stderr,
-                        latencyMs: retry.latencyMs
-                    )
-                }
-            } else {
-                return errorPayload(
-                    code: code,
-                    message: "kktcli read failed",
-                    hint: mapHint(code),
-                    rawStdout: first.stdout,
-                    rawStderr: first.stderr,
-                    latencyMs: first.latencyMs
-                )
-            }
+            let code = MCPErrorMapping.code(returnCode: first.returncode, stdout: first.stdout, stderr: first.stderr)
+            let readError = MCPErrorMapping.readError(fromStdout: first.stdout)
+            return errorPayload(
+                code: code,
+                message: readError.map { "kktcli read failed: \($0.message)" } ?? "kktcli read failed",
+                hint: readError?.hint ?? MCPErrorMapping.hint(for: code),
+                rawStdout: first.stdout,
+                rawStderr: first.stderr,
+                latencyMs: first.latencyMs,
+                details: readError?.details ?? [:]
+            )
         }
 
         guard let payload = jsonObject(from: first.stdout) else {
@@ -570,6 +590,8 @@ private final class KktcliMCPServer {
                 "latency_ms": first.latencyMs,
                 "layout": layout,
                 "background_safe": backgroundSafe,
+                // opened_via, window, list_recovery, main_window, scrollback, ... from kktcli
+                "read": payload["meta"] ?? NSNull(),
             ],
         ]
         if traceAX, !first.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -628,11 +650,11 @@ private final class KktcliMCPServer {
             )
         }
         if run.returncode != 0 {
-            let code = extractErrorCode("\(run.stdout)\n\(run.stderr)")
+            let code = MCPErrorMapping.code(returnCode: run.returncode, stdout: run.stdout, stderr: run.stderr)
             return errorPayload(
                 code: code,
                 message: "kktcli send failed",
-                hint: mapHint(code),
+                hint: MCPErrorMapping.hint(for: code),
                 rawStdout: run.stdout,
                 rawStderr: run.stderr,
                 latencyMs: run.latencyMs
@@ -715,11 +737,11 @@ private final class KktcliMCPServer {
             )
         }
         if run.returncode != 0 {
-            let code = extractErrorCode("\(run.stdout)\n\(run.stderr)")
+            let code = MCPErrorMapping.code(returnCode: run.returncode, stdout: run.stdout, stderr: run.stderr)
             return errorPayload(
                 code: code,
                 message: "kktcli send-image failed",
-                hint: mapHint(code),
+                hint: MCPErrorMapping.hint(for: code),
                 rawStdout: run.stdout,
                 rawStderr: run.stderr,
                 latencyMs: run.latencyMs
@@ -749,58 +771,45 @@ private final class KktcliMCPServer {
         hint: String,
         rawStdout: String,
         rawStderr: String,
-        latencyMs: Int
+        latencyMs: Int,
+        details: [String: String] = [:]
     ) -> JSONDict {
-        [
+        var error: JSONDict = [
+            "code": code,
+            "message": message,
+            "hint": hint,
+            "raw_stdout": rawStdout,
+            "raw_stderr": rawStderr,
+        ]
+        if !details.isEmpty {
+            error["details"] = details
+        }
+        return [
             "ok": false,
-            "error": [
-                "code": code,
-                "message": message,
-                "hint": hint,
-                "raw_stdout": rawStdout,
-                "raw_stderr": rawStderr,
-            ],
+            "error": error,
             "meta": [
                 "latency_ms": latencyMs,
             ],
         ]
     }
 
-    private func extractErrorCode(_ combinedText: String) -> String {
-        let lowered = combinedText.lowercased()
-        if lowered.contains("no such file or directory") || lowered.contains("not found") {
-            return "KKTCLI_BIN_NOT_FOUND"
+    /// nil when the argument is missing, null, or not a recognisable boolean ("automatic").
+    private func optionalBoolValue(_ raw: Any?) -> Bool? {
+        guard let raw, !(raw is NSNull) else { return nil }
+        if let number = raw as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return number.boolValue
         }
-        if combinedText.contains("WINDOW_NOT_READY") {
-            return "KAKAO_WINDOW_UNAVAILABLE"
+        if let string = raw as? String {
+            switch string.lowercased() {
+            case "true", "1", "yes":
+                return true
+            case "false", "0", "no":
+                return false
+            default:
+                return nil
+            }
         }
-        if combinedText.contains("SEARCH_MISS") {
-            return "CHAT_NOT_FOUND"
-        }
-        if combinedText.contains("FOCUS_FAIL") {
-            return "KAKAO_SEARCH_FOCUS_FAILED"
-        }
-        if combinedText.contains("Accessibility") || combinedText.contains("손쉬운 사용") {
-            return "ACCESSIBILITY_PERMISSION_DENIED"
-        }
-        return "UNKNOWN_EXEC_FAILURE"
-    }
-
-    private func mapHint(_ code: String) -> String {
-        switch code {
-        case "KKTCLI_BIN_NOT_FOUND":
-            return "Install kktcli and ensure the current binary is executable."
-        case "KAKAO_WINDOW_UNAVAILABLE":
-            return "KakaoTalk window was not ready. Open KakaoTalk and retry (or enable deep_recovery)."
-        case "CHAT_NOT_FOUND":
-            return "Chat was not found in search results. Verify chat name spacing and visibility."
-        case "KAKAO_SEARCH_FOCUS_FAILED":
-            return "KakaoTalk search input could not be focused. Open KakaoTalk, ensure the chat list is visible, then retry with deep_recovery=true."
-        case "ACCESSIBILITY_PERMISSION_DENIED":
-            return "Grant Accessibility permission in System Settings > Privacy & Security > Accessibility."
-        default:
-            return "Check raw_stdout/raw_stderr and rerun with trace_ax=true for details."
-        }
+        return nil
     }
 
     private func boolValue(_ raw: Any?, defaultValue: Bool) -> Bool {

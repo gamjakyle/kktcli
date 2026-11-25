@@ -37,10 +37,12 @@ class ReadBackgroundSafeContractTests(unittest.TestCase):
 
     def test_mcp_read_exposes_background_safe_without_ui_retry(self) -> None:
         source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
+        mapping = (REPO_ROOT / "Sources" / "KktcliCore" / "MCPMapping.swift").read_text(encoding="utf-8")
 
         self.assertIn('"background_safe"', source)
-        self.assertIn('command.append("--background-safe")', source)
-        self.assertIn("!backgroundSafe", source)
+        self.assertIn('arguments.append("--background-safe")', mapping)
+        # No automatic retry with --deep-recovery (which could activate KakaoTalk).
+        self.assertNotIn("retryCommand", source)
         self.assertIn('"background_safe": backgroundSafe', source)
 
     def test_mcp_startup_skips_status_check_by_default(self) -> None:

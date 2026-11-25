@@ -4,6 +4,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVER_COMMAND = REPO_ROOT / "Sources" / "kktcli" / "Commands" / "MCPServerCommand.swift"
+MCP_MAPPING = REPO_ROOT / "Sources" / "KktcliCore" / "MCPMapping.swift"
 
 
 class MCPServerContractTests(unittest.TestCase):
@@ -26,11 +27,46 @@ class MCPServerContractTests(unittest.TestCase):
         self.assertIn("writeContentLengthMessage", source)
         self.assertIn("writeNewlineDelimitedJSONMessage", source)
 
-    def test_focus_fail_has_actionable_mcp_error_code(self) -> None:
+    def test_server_and_tools_are_named_kktcli(self) -> None:
         source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
-        self.assertIn('combinedText.contains("FOCUS_FAIL")', source)
-        self.assertIn('"KAKAO_SEARCH_FOCUS_FAILED"', source)
-        self.assertIn("search input could not be focused", source)
+        for name in ('"name": "kktcli"', '"kktcli_read"', '"kktcli_send"', '"kktcli_send_image"'):
+            self.assertIn(name, source)
+        self.assertNotIn("kmsg", source)
+
+    def test_read_tool_exposes_unread_and_scrollback_options(self) -> None:
+        source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
+        mapping = MCP_MAPPING.read_text(encoding="utf-8")
+        for option in ('"allow_unread"', '"scrollback"', '"scrollback_timeout"', '"include_system"'):
+            self.assertIn(option, source)
+        for flag in ('"--allow-unread"', '"--scrollback"', '"--no-scrollback"', '"--scrollback-timeout"'):
+            self.assertIn(flag, mapping)
+        # The 8 s call timeout (15 s with deep recovery) is kept and only extended for an
+        # explicit scrollback request.
+        self.assertIn("defaultTimeout: Double = 8", mapping)
+        self.assertIn("deepRecoveryTimeout: Double = 15", mapping)
+        self.assertIn("timeoutSec: request.timeout", source)
+
+    def test_read_errors_keep_the_codes_kktcli_reports(self) -> None:
+        source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
+        mapping = MCP_MAPPING.read_text(encoding="utf-8")
+        self.assertIn("MCPErrorMapping.readError(fromStdout: first.stdout)", source)
+        self.assertIn("MCPErrorMapping.code(returnCode:", source)
+        for code in (
+            '"UNREAD_REFUSED"',
+            '"UNREAD_UNVERIFIED"',
+            '"CHAT_NOT_IN_LIST"',
+            '"CHAT_WINDOW_NOT_OPENED"',
+            '"MENU_UNAVAILABLE"',
+            '"MENU_ITEM_MISSING"',
+            '"NOT_FRONTMOST"',
+        ):
+            self.assertIn(code, mapping)
+
+    def test_focus_fail_has_actionable_mcp_error_code(self) -> None:
+        mapping = MCP_MAPPING.read_text(encoding="utf-8")
+        self.assertIn('combinedText.contains("FOCUS_FAIL")', mapping)
+        self.assertIn('"KAKAO_SEARCH_FOCUS_FAILED"', mapping)
+        self.assertIn("search input could not be focused", mapping)
 
 
 if __name__ == "__main__":
