@@ -44,7 +44,7 @@ public enum AccessibilityPermission {
         }
 
         if openSettingsOnFailure {
-            // Reveal the actual binary (including Homebrew symlink targets) so it
+            // Reveal the actual binary (symlinks resolved) so it
             // can be dragged into the permission list or selected with '+'.
             if let executableURL {
                 NSWorkspace.shared.activateFileViewerSelecting([executableURL])
