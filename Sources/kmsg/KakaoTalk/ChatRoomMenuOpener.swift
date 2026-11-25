@@ -12,8 +12,10 @@ import KmsgCore
 /// menu is shown and right before the press. Any other outcome cancels the menu (AXCancel);
 /// nothing else is ever pressed.
 struct ChatRoomMenuOpener {
-    /// AX messaging timeout for the cell, menu and item (the process default is 0.25 s).
+    /// AX messaging timeout for AXShowMenu / AXPress / AXCancel (the process default is 0.25 s).
     private static let menuMessagingTimeout: Float = 2.0
+    /// AX messaging timeout for reading menu elements while the menu is tracking.
+    private static let menuReadTimeout: Float = 1.0
     private static let popupMenuWindowLayer = 101
 
     let kakao: KakaoTalkApp
@@ -49,7 +51,11 @@ struct ChatRoomMenuOpener {
         }
         AXNodeReader.setMessagingTimeout(menu, seconds: Self.menuMessagingTimeout)
 
-        let items = AXNodeReader.children(menu).map { AXNodeReader.read($0) }
+        let items = AXNodeReader.children(menu).map { element -> AXLiveNode in
+            // Menu tracking can slow KakaoTalk's replies; the process-wide default is 0.25 s.
+            AXNodeReader.setMessagingTimeout(element, seconds: Self.menuReadTimeout)
+            return AXNodeReader.read(element)
+        }
         guard let item = items.first(where: {
             MenuItemSafety.isOpenChatRoomItem(title: $0.snapshot.title, identifier: $0.snapshot.identifier)
         }) else {
@@ -219,20 +225,21 @@ struct ChatRoomMenuOpener {
     // MARK: Menu
 
     private func waitForMenu(on cell: AXUIElement) -> AXUIElement? {
-        for _ in 0..<40 {
+        let deadline = Date().addingTimeInterval(1.5)
+        repeat {
             if let menu = menuChild(of: cell) {
                 return menu
             }
-            if ReadInterruption.requested {
-                break
-            }
             Thread.sleep(forTimeInterval: 0.025)
-        }
-        return menuChild(of: cell)
+        } while Date() < deadline && !ReadInterruption.requested
+        return nil
     }
 
     private func menuChild(of cell: AXUIElement) -> AXUIElement? {
-        AXNodeReader.children(cell).reversed().first { AXNodeReader.read($0).snapshot.role == AXRoleName.menu }
+        AXNodeReader.children(cell).reversed().first { child in
+            AXNodeReader.setMessagingTimeout(child, seconds: Self.menuReadTimeout)
+            return AXNodeReader.read(child).snapshot.role == AXRoleName.menu
+        }
     }
 
     private func menuIsOpen(on cell: AXUIElement) -> Bool {
