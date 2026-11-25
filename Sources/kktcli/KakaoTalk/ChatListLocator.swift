@@ -24,6 +24,7 @@ struct LocatedChatRow {
 struct ChatListLocator {
     static let mainWindowIdentifier = "Main Window"
     static let transcriptScrollAreaIdentifier = "_NS:32"
+    static let messageInputIdentifier = "_NS:51"
 
     let kakao: KakaoTalkApp
     let runner: AXActionRunner
@@ -41,12 +42,19 @@ struct ChatListLocator {
         }
     }
 
+    /// Open chat windows that have a title. Untitled windows (open chats on KakaoTalk 26.10)
+    /// are never matched by title; only `ChatRoomMenuOpener` may accept one, as the single
+    /// new window that appeared after its own press.
+    func titledChatWindows() -> [UIElement] {
+        chatWindows().filter { !OpenedWindowRule.isUntitled($0.title) }
+    }
+
     /// An open chat window titled exactly `title`; failing that, the only window whose
     /// normalized title (no spaces, punctuation or symbols) matches.
     func existingWindow(exactTitle title: String) -> UIElement? {
         let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return nil }
-        let windows = chatWindows()
+        let windows = titledChatWindows()
         if let exact = windows.first(where: { Self.trimmed($0.title) == wanted }) {
             return exact
         }
@@ -65,9 +73,9 @@ struct ChatListLocator {
         (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Best partial title match among open chat windows.
+    /// Best partial title match among open chat windows (titled ones only).
     func existingWindow(query: String) -> UIElement? {
-        chatWindows()
+        titledChatWindows()
             .compactMap { window -> (window: UIElement, score: Int)? in
                 guard let title = window.title else { return nil }
                 let score = ChatQueryMatcher.score(query: query, candidate: title)
@@ -172,6 +180,26 @@ struct ChatListLocator {
             Thread.sleep(forTimeInterval: 0.1)
         } while Date() < deadline && !ReadInterruption.requested
         return nil
+    }
+
+    /// The window shows a chat: its transcript scroll area `_NS:32` holds an AXTable, or it has
+    /// the message input `_NS:51` (an AXTextArea). Reads only.
+    func looksLikeChatWindow(_ window: UIElement) -> Bool {
+        for child in AXNodeReader.children(window.axElement) {
+            let node = AXNodeReader.read(child, depth: 1)
+            if node.snapshot.role == AXRoleName.scrollArea,
+               node.snapshot.identifier == Self.transcriptScrollAreaIdentifier,
+               node.children.contains(where: { AXNodeReader.read($0).snapshot.role == AXRoleName.table })
+            {
+                return true
+            }
+            if node.snapshot.role == AXRoleName.textArea, node.snapshot.identifier == Self.messageInputIdentifier {
+                return true
+            }
+        }
+        return AXNodeReader.firstDescendant(of: window.axElement, maxNodes: 150, where: {
+            $0.snapshot.role == AXRoleName.textArea && $0.snapshot.identifier == Self.messageInputIdentifier
+        }) != nil
     }
 
     func hasTranscript(_ window: UIElement) -> Bool {

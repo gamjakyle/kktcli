@@ -6,9 +6,10 @@ import Foundation
 /// types carries the room type in front, e.g. "팀채팅, 스터디 모임", while the chat
 /// window that opens for that row is titled without it ("스터디 모임").
 /// Waiting for a window titled exactly like the row therefore never succeeds for those rooms.
+/// Open chats ("오픈채팅, <name>") may open a window with an empty title; see `OpenedWindowRule`.
 public enum RoomTitle {
     /// Room-type prefixes seen in chat-list row titles.
-    public static let knownTypePrefixes = ["팀채팅, ", "나와의 채팅, "]
+    public static let knownTypePrefixes = ["팀채팅, ", "나와의 채팅, ", "오픈채팅, "]
 
     /// The chat window title expected for a chat-list row title.
     public static func expectedWindowTitle(forRowTitle rowTitle: String) -> String {

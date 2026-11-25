@@ -14,6 +14,19 @@ struct RoomTitleTests {
         #expect(RoomTitle.windowMatchesRow(windowTitle: "홍길동", rowTitle: "나와의 채팅, 홍길동"))
     }
 
+    @Test("An open-chat row expects a window titled without the 오픈채팅 prefix")
+    func openChatPrefix() {
+        #expect(RoomTitle.knownTypePrefixes.contains("오픈채팅, "))
+        #expect(RoomTitle.expectedWindowTitle(forRowTitle: "오픈채팅, 맥 개발자 모임") == "맥 개발자 모임")
+        #expect(RoomTitle.expectedWindowTitle(forRowTitle: "  오픈채팅, 모임  ") == "모임")
+        #expect(RoomTitle.windowMatchesRow(windowTitle: "모임", rowTitle: "오픈채팅, 모임"))
+        #expect(RoomTitle.windowMatchesRow(windowTitle: "오픈채팅, 모임", rowTitle: "오픈채팅, 모임"))
+        // An empty window title never matches, whatever the prefix.
+        #expect(!RoomTitle.windowMatchesRow(windowTitle: "", rowTitle: "오픈채팅, 모임"))
+        #expect(!RoomTitle.windowMatchesRow(windowTitle: nil, rowTitle: "오픈채팅, 모임"))
+        #expect(!RoomTitle.windowMatchesRow(windowTitle: "", rowTitle: "오픈채팅, "))
+    }
+
     @Test("Plain rooms still need the same title")
     func plainRooms() {
         #expect(RoomTitle.windowMatchesRow(windowTitle: "홍길동", rowTitle: "홍길동"))
@@ -23,7 +36,7 @@ struct RoomTitleTests {
 
     @Test("Only a short single label may precede the window title of a just-opened window")
     func unknownLabel() {
-        #expect(RoomTitle.openedWindowMatchesRow(windowTitle: "모임", rowTitle: "오픈채팅, 모임"))
+        #expect(RoomTitle.openedWindowMatchesRow(windowTitle: "모임", rowTitle: "새유형, 모임"))
         #expect(!RoomTitle.openedWindowMatchesRow(windowTitle: "모임", rowTitle: "아주 긴 다른 방 이름 일부, 모임"))
         #expect(!RoomTitle.openedWindowMatchesRow(windowTitle: "모임", rowTitle: "a, b, 모임"))
         #expect(RoomTitle.openedWindowMatchesRow(windowTitle: "스터디 모임", rowTitle: "팀채팅, 스터디 모임"))
@@ -32,7 +45,7 @@ struct RoomTitleTests {
     @Test("An unnamed group row never matches an already open 1:1 window of one member")
     func groupMemberListIsNotATypeLabel() {
         #expect(!RoomTitle.windowMatchesRow(windowTitle: "아빠", rowTitle: "엄마, 아빠"))
-        #expect(!RoomTitle.windowMatchesRow(windowTitle: "모임", rowTitle: "오픈채팅, 모임"))
+        #expect(!RoomTitle.windowMatchesRow(windowTitle: "모임", rowTitle: "새유형, 모임"))
         #expect(RoomTitle.windowMatchesRow(windowTitle: "엄마, 아빠", rowTitle: "엄마, 아빠"))
     }
 }

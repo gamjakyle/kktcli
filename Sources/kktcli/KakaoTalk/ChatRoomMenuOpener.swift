@@ -12,11 +12,21 @@ import KktcliCore
 /// scrolling, before the menu is shown and right before the press. Any other outcome cancels
 /// the menu (AXCancel); nothing else is ever pressed. Opening a room with unread messages
 /// sends read receipts, exactly as opening it by hand does.
+///
+/// A window that appears after the press and did not exist before was opened by this
+/// command. If none of them is accepted as the room, every such window is closed with its own
+/// close button before the error is reported, so no window is left behind.
 struct ChatRoomMenuOpener {
     struct OpenedRoom {
         let window: UIElement
         /// The row's unread badge as read right before 채팅방 열기 was pressed.
         let unreadBefore: UnreadBadge
+        /// KakaoTalk gave the window no title (open chats on 26.10.0); it was accepted as the
+        /// only new window, after checking that it shows a chat.
+        let windowTitleEmpty: Bool
+        /// The window appeared after the press (it did not exist before), so this command
+        /// opened it. False when 채팅방 열기 only brought up a window that was already open.
+        let isNewWindow: Bool
     }
 
     /// AX messaging timeout for AXShowMenu / AXPress / AXCancel (the process default is 0.25 s).
@@ -96,23 +106,57 @@ struct ChatRoomMenuOpener {
 
         let opened = waitForChatWindow(title: row.title, windowsBefore: windowsBefore)
         if let window = opened.window {
-            return OpenedRoom(window: window, unreadBefore: unreadBefore)
+            return OpenedRoom(window: window, unreadBefore: unreadBefore, windowTitleEmpty: opened.untitled, isNewWindow: opened.isNew)
         }
 
         if menuIsOpen(on: cell) {
             cancel(menu)
         }
-        var details: [String: String] = [:]
-        if !opened.newWindowTitles.isEmpty {
-            // Left open on purpose: it cannot be proven that this command opened them.
-            details["unexpected_new_windows"] = opened.newWindowTitles.joined(separator: ", ")
-        }
+        let details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)
         throw ReadFailure(
             code: "CHAT_WINDOW_NOT_OPENED",
-            message: "No chat window titled '\(row.title)' appeared after pressing \(MenuItemSafety.openChatRoomTitle) (AXPress status \(pressStatus.rawValue)).",
+            message: "No chat window for '\(row.title)' was recognised after pressing \(MenuItemSafety.openChatRoomTitle) (AXPress status \(pressStatus.rawValue)).",
             hint: "Retry, or check KakaoTalk for a dialog.",
             details: details
         )
+    }
+
+    /// Windows that exist now but did not before the press (never the main window).
+    private func newWindows(since windowsBefore: [AXUIElement]) -> [UIElement] {
+        kakao.windows.filter { window in
+            window.identifier != ChatListLocator.mainWindowIdentifier
+                && !windowsBefore.contains { CFEqual($0, window.axElement) }
+        }
+    }
+
+    /// No window was accepted as the room. Every window that appeared after the press was
+    /// opened by it, so each is closed with its own close button (titles are not checked:
+    /// they may be empty). Returns the details for the error document.
+    private func closeWindowsOpenedByThePress(windowsBefore: [AXUIElement]) -> [String: String] {
+        let windows = newWindows(since: windowsBefore)
+        guard !windows.isEmpty else { return [:] }
+        // Labels first: a closed window can no longer be read.
+        let labels = windows.map { OpenedWindowRule.label($0.title) }
+        let closer = ChatWindowCloser(kakao: kakao, runner: runner)
+        var closed: [String] = []
+        var leftOpen: [String] = []
+        for (window, label) in zip(windows, labels) {
+            let outcome = closer.close(window, expectedTitle: nil)
+            runner.log("read: unrecognised new window '\(label)' after the press: \(outcome.code)")
+            if outcome == .closed {
+                closed.append(label)
+            } else {
+                leftOpen.append("\(label) (\(outcome.code))")
+            }
+        }
+        var details = ["unexpected_new_windows": labels.joined(separator: ", ")]
+        if !closed.isEmpty {
+            details["closed_new_windows"] = closed.joined(separator: ", ")
+        }
+        if !leftOpen.isEmpty {
+            details["left_open_windows"] = leftOpen.joined(separator: ", ")
+        }
+        return details
     }
 
     // MARK: Verification
@@ -312,37 +356,45 @@ struct ChatRoomMenuOpener {
 
     // MARK: Opened window
 
+    /// Waits for the room's window (see `OpenedWindowRule`): a window titled for the row, or
+    /// the single new window, also when it is untitled as long as it shows a chat. Team chats
+    /// ("팀채팅, …"), the self chat and open chats ("오픈채팅, …") open windows titled without
+    /// the room-type prefix; open chats may open one with an empty title.
     private func waitForChatWindow(
         title: String,
         windowsBefore: [AXUIElement],
         timeout: TimeInterval = 3.0
-    ) -> (window: UIElement?, newWindowTitles: [String]) {
-        // Team chats ("팀채팅, …") and the self chat ("나와의 채팅, …") open a window titled
-        // without that room-type prefix, so compare against the expected window title.
-        let target = ChatTextNormalizer.normalize(RoomTitle.expectedWindowTitle(forRowTitle: title))
+    ) -> (window: UIElement?, untitled: Bool, isNew: Bool) {
+        let locator = ChatListLocator(kakao: kakao, runner: runner)
         let deadline = Date().addingTimeInterval(timeout)
-        var newWindows: [UIElement] = []
 
         repeat {
             let windows = kakao.windows.filter { $0.identifier != ChatListLocator.mainWindowIdentifier }
-            if let match = windows.first(where: { RoomTitle.windowMatchesRow(windowTitle: $0.title, rowTitle: title) }) {
-                return (match, [])
+            var candidates = windows.map { window in
+                OpenedWindowCandidate(
+                    title: window.title,
+                    isNew: !windowsBefore.contains { CFEqual($0, window.axElement) }
+                )
             }
-            newWindows = windows.filter { window in
-                !windowsBefore.contains { CFEqual($0, window.axElement) }
+            // The chat content check costs AX reads; only an untitled single new window needs it.
+            if let index = OpenedWindowRule.untitledNewWindow(in: candidates) {
+                candidates[index].isChatWindow = locator.looksLikeChatWindow(windows[index])
             }
-            // A single window that appeared after the press is the room that was just opened when
-            // its title differs only by an unlisted room-type label, spacing or punctuation.
-            if newWindows.count == 1, let window = newWindows.first,
-               RoomTitle.openedWindowMatchesRow(windowTitle: window.title, rowTitle: title)
-                || ChatTextNormalizer.normalize(window.title ?? "") == target
-            {
-                runner.log("read: accepting new window '\(window.title ?? "")' for row title '\(title)'")
-                return (window, [])
+            switch OpenedWindowRule.match(rowTitle: title, candidates: candidates) {
+            case .titled(let index):
+                if candidates[index].isNew, !RoomTitle.windowMatchesRow(windowTitle: candidates[index].title, rowTitle: title) {
+                    runner.log("read: accepting new window '\(candidates[index].title ?? "")' for row title '\(title)'")
+                }
+                return (windows[index], false, candidates[index].isNew)
+            case .untitled(let index):
+                runner.log("read: accepting the only new window, untitled but showing a chat, for row title '\(title)'")
+                return (windows[index], true, true)
+            case .none:
+                break
             }
             Thread.sleep(forTimeInterval: 0.05)
         } while Date() < deadline && !ReadInterruption.requested
 
-        return (nil, newWindows.map { $0.title ?? "(untitled)" })
+        return (nil, false, false)
     }
 }

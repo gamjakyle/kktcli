@@ -395,14 +395,19 @@ All JSON is written to stdout with sorted keys; `--trace-ax` diagnostics go to s
     "unread_after": null,
     "unread_before": null,
     "window": "closed",
-    "window_detail": null
+    "window_detail": null,
+    "window_title_empty": false
   },
   "ok": true
 }
 ```
 
 `chat` is the window title; `meta.row_title` is the chat-list title, which differs for
-team chats (`팀채팅, <name>` opens a window titled `<name>`). `meta.opened_via` is
+team chats, the self chat and open chats (`팀채팅, <name>` and `오픈채팅, <name>` open a
+window titled `<name>`). Open chats can open a window with an empty title on KakaoTalk
+26.10.0: kktcli accepts it only as the single window that appeared after its own press and
+that shows a transcript or message input, then reports `meta.window_title_empty: true` and
+uses `<name>` as `chat`. `meta.opened_via` is
 `existing_window`, `chat_list_menu`, `legacy_chat_list` or `legacy_search`;
 `meta.window` is `untouched`, `closed`, `kept_open` or `left_open`. `meta.unread_before`,
 `meta.unread_after` and `meta.marked_read` are described under
@@ -442,7 +447,7 @@ team chats (`팀채팅, <name>` opens a window titled `<name>`). `meta.opened_vi
 | `ROW_NOT_VISIBLE` | 1 | The row could not be scrolled into view. |
 | `ROW_CHANGED` | 1 | The list reordered while opening; retry. |
 | `MENU_UNAVAILABLE`, `MENU_ITEM_MISSING`, `MENU_ITEM_BLOCKED` | 1 | The context menu could not be used; nothing was pressed. |
-| `CHAT_WINDOW_NOT_OPENED` | 1 | No window appeared after 채팅방 열기. |
+| `CHAT_WINDOW_NOT_OPENED` | 1 | No window was recognised as the room after 채팅방 열기. Every window that appeared after the press is closed with its close button; `details` lists them (`unexpected_new_windows`, untitled ones as `(untitled)`; `closed_new_windows`; `left_open_windows`). |
 | `TRANSCRIPT_UNAVAILABLE` | 1 | The window has no readable transcript. |
 | `BACKGROUND_SAFE_BLOCKED` | 1 | `--background-safe` and no matching open window. |
 | `ACCESSIBILITY_PERMISSION_DENIED`, `KAKAO_NOT_RUNNING`, `KAKAO_LAUNCH_FAILED`, `KAKAO_UNAVAILABLE`, `KAKAO_AUTH_FAILED` | 1 | Setup or login problem. |

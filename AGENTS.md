@@ -55,7 +55,8 @@ Main window (identifier "Main Window"):
     _NS:138 unread badge ("안읽음 N"); the cell supports AXShowMenu
     (menu item openChatRoom: "채팅방 열기")
 
-Chat window (title = room name; team chats drop the "팀채팅, " row prefix):
+Chat window (title = room name; team, self and open chats drop the "팀채팅, ",
+"나와의 채팅, ", "오픈채팅, " row prefix; open chats may have an EMPTY title):
 ├── AXScrollArea _NS:32 > AXTable > AXRow (transcript)
 └── AXTextArea _NS:51 "메시지 입력"
 ```

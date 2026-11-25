@@ -35,11 +35,14 @@ enum WindowCloseOutcome: Equatable {
     case pressFailed(Int32)
     case stillOpen
     case titleMismatch(String)
+    case refusedMainWindow
 
     var code: String {
         switch self {
         case .closed:
             return "closed"
+        case .refusedMainWindow:
+            return "refused_main_window"
         case .closeButtonMissing:
             return "close_button_missing"
         case .pressFailed:
@@ -191,28 +194,7 @@ struct ChatWindowResolver {
     /// Like `closeWindow`, but first checks that the window still shows `expectedTitle` and
     /// reports why a window was left open.
     func closeWindowViaCloseButton(_ window: UIElement, expectedTitle: String?) -> WindowCloseOutcome {
-        if let expectedTitle {
-            let currentTitle = window.title ?? ""
-            guard currentTitle.trimmingCharacters(in: .whitespacesAndNewlines) == expectedTitle.trimmingCharacters(in: .whitespacesAndNewlines) else {
-                runner.log("close window: title '\(currentTitle)' does not match '\(expectedTitle)'; leaving it open")
-                return .titleMismatch(currentTitle)
-            }
-        }
-
-        guard let closeButton = AXNodeReader.elementAttribute(window.axElement, kAXCloseButtonAttribute) else {
-            runner.log("close window: no AXCloseButton; leaving the window open")
-            return .closeButtonMissing
-        }
-
-        let status = AXNodeReader.perform(closeButton, kAXPressAction)
-        if waitForWindowClosed(window, label: "close via AXCloseButton") {
-            return .closed
-        }
-        if status != .success {
-            runner.log("close window: AXCloseButton press failed (AXError \(status.rawValue))")
-            return .pressFailed(status.rawValue)
-        }
-        return .stillOpen
+        ChatWindowCloser(kakao: kakao, runner: runner).close(window, expectedTitle: expectedTitle)
     }
 
     /// Applies a non-default `--layout` (activates, raises and resizes, as before).
@@ -1065,7 +1047,8 @@ struct ChatWindowResolver {
 
     private func findMatchingChatWindow(in windows: [UIElement], query: String) -> UIElement? {
         windows.compactMap { window -> (window: UIElement, score: Int)? in
-            guard let title = window.title else { return nil }
+            // Untitled windows (open chats) are never matched by title.
+            guard let title = window.title, !OpenedWindowRule.isUntitled(title) else { return nil }
             let score = scoreQueryMatch(query: query, candidateText: title)
             guard score > 0 else { return nil }
             return (window, score)
@@ -1266,14 +1249,6 @@ struct ChatWindowResolver {
             }
         }
         return false
-    }
-
-    private func waitForWindowClosed(_ window: UIElement, label: String) -> Bool {
-        runner.waitUntil(label: label, timeout: 0.9, pollInterval: 0.06, evaluateAfterTimeout: false) {
-            !kakao.windows.contains { candidate in
-                areSameAXElement(candidate, window)
-            }
-        }
     }
 
     private func areSameAXElement(_ lhs: UIElement, _ rhs: UIElement) -> Bool {

@@ -66,7 +66,7 @@ Please read this first.
 | Keyboard paths | No check of the frontmost app | Paths that still type (send, login, legacy open) post input only while KakaoTalk is frontmost |
 | `--json` | Plain text when empty or failing | Always exactly one JSON document (error code and exit status) |
 | List state recovery | None | Restores a search-filtered chat list and a closed main window by pressing only specific buttons / menu items |
-| Team chats | Could fail in the search fallback | Matches row title `팀채팅, <name>` with window title `<name>` |
+| Team and open chats | Could fail in the search fallback | Matches row titles `팀채팅, <name>` / `오픈채팅, <name>` with window title `<name>`; recognises an untitled open-chat window when it shows a chat |
 | Distribution | `update` command, Homebrew, release automation | Build from source; no network code; separate data directories |
 | MCP | `kmsg_*` tools | `kktcli_*` tools, `skip_unread` and scrollback options, read error codes passed through |
 

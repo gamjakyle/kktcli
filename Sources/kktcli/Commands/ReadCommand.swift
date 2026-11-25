@@ -201,6 +201,9 @@ struct ReadCommand: ParsableCommand {
         var listRow: LocatedChatRow? = nil
         var listRecovery: ChatListRecoveryReport? = nil
         var mainWindowAction: ChatListLocator.MainWindowAction? = nil
+        /// The window KakaoTalk opened has no title (open chats); `expectedTitle` is then the
+        /// row title without its room-type prefix and is not checked when closing.
+        var windowTitleEmpty = false
 
         var openedTransiently: Bool {
             method != .existingWindow
@@ -218,6 +221,7 @@ struct ReadCommand: ParsableCommand {
         let markedRead: Bool?
         let windowState: String
         let windowDetail: String?
+        let windowTitleEmpty: Bool
         let listRecovery: ChatListRecoveryReport?
         let mainWindow: String?
     }
@@ -314,7 +318,7 @@ struct ReadCommand: ParsableCommand {
         mainWindowAction = opened.mainWindowAction ?? mainWindowAction
         runner.log("read: chat window via \(opened.method.rawValue) title='\(opened.window.title ?? "")'")
 
-        let chatTitle = opened.window.title ?? opened.expectedTitle
+        let chatTitle = OpenedWindowRule.isUntitled(opened.window.title) ? opened.expectedTitle : (opened.window.title ?? opened.expectedTitle)
         var result: StructuredTranscriptResult?
         let parts = opened.openedTransiently
             ? StructuredTranscriptReader.waitForParts(in: opened.window, timeout: 1.5)
@@ -360,6 +364,7 @@ struct ReadCommand: ParsableCommand {
             markedRead: UnreadReceipt.markedRead(before: opened.unreadBefore, after: unreadAfter),
             windowState: windowState,
             windowDetail: windowDetail,
+            windowTitleEmpty: opened.windowTitleEmpty,
             listRecovery: opened.listRecovery,
             mainWindow: mainWindowAction?.rawValue
         )
@@ -518,16 +523,27 @@ struct ReadCommand: ParsableCommand {
             throw withRecoveryDetails(failure)
         }
         let window = openedRoom.window
+        if !openedRoom.isNewWindow {
+            // 채팅방 열기 only brought up a window that was already open: read it, leave it open.
+            runner.log("read: the room's window was already open; it is left open")
+            var existingChat = existing(window)
+            existingChat.rowTitle = row.title
+            existingChat.listRecovery = listRecovery
+            existingChat.mainWindowAction = mainWindowAction
+            return existingChat
+        }
         resolver.applyLayoutIfRequested(window, label: "opened chat window")
+        let roomTitle = RoomTitle.expectedWindowTitle(forRowTitle: row.title)
         return OpenedChat(
             window: window,
             method: .chatListMenu,
-            expectedTitle: window.title ?? RoomTitle.expectedWindowTitle(forRowTitle: row.title),
+            expectedTitle: openedRoom.windowTitleEmpty ? roomTitle : (window.title ?? roomTitle),
             unreadBefore: openedRoom.unreadBefore,
             rowTitle: row.title,
             listRow: row,
             listRecovery: listRecovery,
-            mainWindowAction: mainWindowAction
+            mainWindowAction: mainWindowAction,
+            windowTitleEmpty: openedRoom.windowTitleEmpty
         )
     }
 
@@ -660,7 +676,13 @@ struct ReadCommand: ParsableCommand {
             }
         }
 
-        let outcome = resolver.closeWindowViaCloseButton(opened.window, expectedTitle: opened.expectedTitle)
+        // A window opened through the chat-list menu appeared after this command's own press and
+        // did not exist before, so it is closed whatever its title is now (open chats may have
+        // none). Windows from the legacy paths must still show the title they were opened with.
+        let outcome = resolver.closeWindowViaCloseButton(
+            opened.window,
+            expectedTitle: opened.method == .chatListMenu ? nil : opened.expectedTitle
+        )
         if outcome == .closed {
             runner.log("read: auto-opened chat window closed")
             return ("closed", nil)
@@ -709,6 +731,7 @@ struct ReadCommand: ParsableCommand {
         let listRecovery: ChatListRecoveryReport?
         let window: String
         let windowDetail: String?
+        let windowTitleEmpty: Bool
         let unreadBefore: String?
         let unreadAfter: String?
         let markedRead: Bool?
@@ -725,6 +748,7 @@ struct ReadCommand: ParsableCommand {
             case listRecovery = "list_recovery"
             case window
             case windowDetail = "window_detail"
+            case windowTitleEmpty = "window_title_empty"
             case unreadBefore = "unread_before"
             case unreadAfter = "unread_after"
             case markedRead = "marked_read"
@@ -743,6 +767,7 @@ struct ReadCommand: ParsableCommand {
             try container.encode(listRecovery, forKey: .listRecovery)
             try container.encode(window, forKey: .window)
             try container.encode(windowDetail, forKey: .windowDetail)
+            try container.encode(windowTitleEmpty, forKey: .windowTitleEmpty)
             try container.encode(unreadBefore, forKey: .unreadBefore)
             try container.encode(unreadAfter, forKey: .unreadAfter)
             try container.encode(markedRead, forKey: .markedRead)
@@ -808,6 +833,7 @@ struct ReadCommand: ParsableCommand {
                     listRecovery: outcome.listRecovery,
                     window: outcome.windowState,
                     windowDetail: outcome.windowDetail,
+                    windowTitleEmpty: outcome.windowTitleEmpty,
                     unreadBefore: UnreadReceipt.evidence(outcome.unreadBefore),
                     unreadAfter: UnreadReceipt.evidence(outcome.unreadAfter),
                     markedRead: outcome.markedRead,
