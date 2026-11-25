@@ -39,6 +39,14 @@ struct ReadCommand: ParsableCommand {
             Use --background-safe to read only already exposed chat windows without launching,
             activating, logging in, searching, opening rows, resizing, or closing windows.
 
+            While KakaoTalk is in front and the keyboard or mouse was used less than
+            --idle-seconds ago, nothing that opens or brings up a KakaoTalk window is pressed: a
+            window opened then would take the user's typing. kktcli waits up to --wait-for-idle
+            seconds and then fails with KAKAOTALK_IN_USE (exit status 75). If KakaoTalk's main
+            window is not visible (closed, minimised, or on another desktop or full-screen Space)
+            and KakaoTalk is not in front, it is not reopened, because that would switch the
+            user's desktop: MAIN_WINDOW_NOT_VISIBLE, unless --allow-activate is given.
+
             When author is "(me)", the message was sent by you; author is null when the sender
             could not be established (system lines, banners). date comes from the transcript's
             date separators; time_source is "label" when the message carries its own time and
@@ -133,6 +141,18 @@ struct ReadCommand: ParsableCommand {
 
     @Flag(name: .long, help: "Include system messages (joins, notices)")
     var includeSystem: Bool = false
+
+    @Option(name: .long, help: "While KakaoTalk is in front, press nothing until the keyboard and mouse were idle this many seconds")
+    var idleSeconds: Double = UserActivityPolicy.defaultIdleSeconds
+
+    @Option(name: .long, help: "Wait at most this many seconds for that (0 fails at once with KAKAOTALK_IN_USE)")
+    var waitForIdle: Double = UserActivityPolicy.defaultWaitSeconds
+
+    @Flag(
+        name: .long,
+        help: "Allow bringing KakaoTalk to the front (카카오톡 열기) when its main window is not visible; may switch desktops"
+    )
+    var allowActivate: Bool = false
 
     @Flag(
         name: .long,
@@ -244,6 +264,8 @@ struct ReadCommand: ParsableCommand {
         let windowTitleEmpty: Bool
         let listRecovery: ChatListRecoveryReport?
         let mainWindow: String?
+        /// Time spent waiting for the user to leave KakaoTalk idle or in the background.
+        let waitedForUserMs: Int
     }
 
     private var scrollbackEnabled: Bool {
@@ -283,6 +305,12 @@ struct ReadCommand: ParsableCommand {
         if fullText && backgroundSafe {
             return "--full-text cannot be used with --background-safe (it presses 전체보기 and closes what that opens)."
         }
+        if idleSeconds < 0 || idleSeconds > UserActivityPolicy.maximumSeconds {
+            return "--idle-seconds must be between 0 and \(Int(UserActivityPolicy.maximumSeconds))."
+        }
+        if waitForIdle < 0 || waitForIdle > UserActivityPolicy.maximumSeconds {
+            return "--wait-for-idle must be between 0 and \(Int(UserActivityPolicy.maximumSeconds))."
+        }
         if scrollbackTimeout < 0 || scrollbackTimeout > Self.maximumScrollbackTimeout {
             return "--scrollback-timeout must be between 0 and \(Int(Self.maximumScrollbackTimeout)) seconds."
         }
@@ -315,6 +343,8 @@ struct ReadCommand: ParsableCommand {
         /// How a closed main window was brought back before the login check, if it was
         /// (reported with the first chat only).
         var mainWindowAction: ChatListLocator.MainWindowAction?
+        let activity: UserActivityGuard
+        let mainWindowAccess: MainWindowAccess
     }
 
     private func startSession() throws -> Session {
@@ -328,14 +358,18 @@ struct ReadCommand: ParsableCommand {
         }
 
         let runner = AXActionRunner(traceEnabled: traceAX)
+        let activity = UserActivityGuard(idleSeconds: idleSeconds, waitBudget: waitForIdle, runner: runner)
+        let mainWindowAccess = MainWindowAccess(runner: runner, activity: activity, allowActivate: allowActivate)
 
-        // A closed main window is brought back with KakaoTalk's "카카오톡 열기" menu item before
-        // the login check runs; otherwise that check would reopen it with `open KakaoTalk.app`
-        // or activate KakaoTalk.
+        // A main window that Accessibility does not show is dealt with before the login check,
+        // which would otherwise activate KakaoTalk or run `open KakaoTalk.app`. It is reopened
+        // with "카카오톡 열기" only when that switches no app or desktop (KakaoTalk in front)
+        // or --allow-activate; otherwise MAIN_WINDOW_NOT_VISIBLE and nothing is pressed.
         var mainWindowAction: ChatListLocator.MainWindowAction?
         if !backgroundSafe, KakaoTalkApp.isRunning, let early = try? KakaoTalkApp(autoLaunch: false) {
             let earlyLocator = ChatListLocator(kakao: early, runner: runner)
-            if earlyLocator.mainWindow() == nil, earlyLocator.pressShowMainWindowMenuItem(),
+            if earlyLocator.mainWindow() == nil,
+               try mainWindowAccess.reopen(kakao: early, locator: earlyLocator),
                earlyLocator.waitForMainWindow(timeout: 3.0) != nil
             {
                 mainWindowAction = .openedViaMenuItem
@@ -362,21 +396,34 @@ struct ReadCommand: ParsableCommand {
         // From here on Ctrl-C / SIGTERM stops the bounded loops early instead of killing the
         // process, so a window opened below is still closed and a document is still printed.
         ReadInterruption.install()
-        return Session(runner: runner, kakao: kakao, resolver: chatWindowResolver, locator: locator, mainWindowAction: mainWindowAction)
+        return Session(
+            runner: runner,
+            kakao: kakao,
+            resolver: chatWindowResolver,
+            locator: locator,
+            mainWindowAction: mainWindowAction,
+            activity: activity,
+            mainWindowAccess: mainWindowAccess
+        )
     }
 
     /// Opens (or finds) one chat, reads it and closes what it opened. `startedAt` anchors the
-    /// automatic time budget (the MCP server stops `read` after 8 s).
-    private func readRoom(_ target: ReadTarget, session: Session, startedAt: Date) throws -> ReadOutcome {
+    /// automatic time budget (the MCP server stops `read` after 8 s); time spent waiting for the
+    /// user since `waitedBefore` (the guard's total at `startedAt`) does not count against it.
+    private func readRoom(_ target: ReadTarget, session: Session, startedAt: Date, waitedBefore: Double = 0) throws -> ReadOutcome {
         let runner = session.runner
         let kakao = session.kakao
         let chatWindowResolver = session.resolver
         let locator = session.locator
         var mainWindowAction = session.mainWindowAction
         let fetchedAt = Date()
+        // Waiting for the user does not count against the automatic time budgets.
+        func budgetAnchor() -> Date {
+            startedAt.addingTimeInterval(session.activity.totalWaited - waitedBefore)
+        }
         let opened: OpenedChat
         do {
-            opened = try open(target, kakao: kakao, resolver: chatWindowResolver, locator: locator, runner: runner)
+            opened = try open(target, session: session)
         } catch let failure as ReadFailure {
             if let mainWindowAction {
                 throw failure.adding(["main_window": mainWindowAction.rawValue])
@@ -394,7 +441,7 @@ struct ReadCommand: ParsableCommand {
         if let parts {
             var budget = scrollbackTimeout
             if !scrollback {
-                budget = min(budget, max(0, Self.automaticWorkBudget - Date().timeIntervalSince(startedAt)))
+                budget = min(budget, max(0, Self.automaticWorkBudget - Date().timeIntervalSince(budgetAnchor())))
             }
             result = StructuredTranscriptReader(runner: runner).read(
                 parts,
@@ -404,7 +451,7 @@ struct ReadCommand: ParsableCommand {
                     scrollback: scrollbackEnabled,
                     scrollbackTimeout: budget
                 ),
-                fullText: fullText ? FullTextFetcher(kakao: kakao, runner: runner) : nil
+                fullText: fullText ? FullTextFetcher(kakao: kakao, runner: runner, activity: session.activity) : nil
             )
         }
 
@@ -421,7 +468,7 @@ struct ReadCommand: ParsableCommand {
             )
         }
 
-        let unreadAfter = recheckUnread(opened, locator: locator, startedAt: startedAt, runner: runner)
+        let unreadAfter = recheckUnread(opened, locator: locator, startedAt: budgetAnchor(), runner: runner)
         return ReadOutcome(
             chat: chatTitle,
             fetchedAt: fetchedAt,
@@ -435,7 +482,8 @@ struct ReadCommand: ParsableCommand {
             windowDetail: windowDetail,
             windowTitleEmpty: opened.windowTitleEmpty,
             listRecovery: opened.listRecovery,
-            mainWindow: mainWindowAction?.rawValue
+            mainWindow: mainWindowAction?.rawValue,
+            waitedForUserMs: Int((session.activity.totalWaited - waitedBefore) * 1000)
         )
     }
 
@@ -459,13 +507,11 @@ struct ReadCommand: ParsableCommand {
         }
     }
 
-    private func open(
-        _ target: ReadTarget,
-        kakao: KakaoTalkApp,
-        resolver: ChatWindowResolver,
-        locator: ChatListLocator,
-        runner: AXActionRunner
-    ) throws -> OpenedChat {
+    private func open(_ target: ReadTarget, session: Session) throws -> OpenedChat {
+        let kakao = session.kakao
+        let resolver = session.resolver
+        let locator = session.locator
+        let runner = session.runner
         func existing(_ window: UIElement) -> OpenedChat {
             runner.log("read: found existing chat window")
             resolver.applyLayoutIfRequested(window, label: "existing chat window")
@@ -495,18 +541,22 @@ struct ReadCommand: ParsableCommand {
             if let window = locator.existingWindow(query: target.exactTitle) {
                 return existing(window)
             }
+            // The legacy path types into KakaoTalk: never while the user is using it.
+            try session.activity.waitUntilClear(.legacyOpen)
             return try openLegacy(target, resolver: resolver, locator: locator)
         }
 
         // 2. The chat list, opened through the row's context menu.
-        let (mainWindow, mainWindowAction) = try locator.requireMainWindow(allowOpenCommand: deepRecovery)
+        let (mainWindow, mainWindowAction) = try locator.requireMainWindow(allowOpenCommand: deepRecovery, access: session.mainWindowAccess)
         var access = locator.access(in: mainWindow)
         var listRecovery: ChatListRecoveryReport?
 
         // Only when the wanted row is missing: a leftover search filter may hide it. Restores the
         // full list at most once (취소 in the search field and the top-bar 검색 toggle only).
-        func recoverList(lastSeenIndex: Int?) -> Bool {
+        func recoverList(lastSeenIndex: Int?) throws -> Bool {
             guard listRecovery == nil else { return false }
+            // 취소 / 검색 change what the user may be typing into KakaoTalk's search field.
+            try session.activity.waitUntilClear(.listRecovery)
             listRecovery = ChatListRecoverer(kakao: kakao, runner: runner).recover(
                 in: mainWindow,
                 table: access?.table,
@@ -529,7 +579,7 @@ struct ReadCommand: ParsableCommand {
             targetLastSeenIndex = record.lastSeenIndex
         }
         if access == nil {
-            _ = recoverList(lastSeenIndex: targetLastSeenIndex)
+            _ = try recoverList(lastSeenIndex: targetLastSeenIndex)
         }
         guard var listAccess = access else {
             throw withRecoveryDetails(ReadFailure(
@@ -545,7 +595,7 @@ struct ReadCommand: ParsableCommand {
             do {
                 row = try locator.locate(chatID: chatID, record: record, in: listAccess)
             } catch let failure as ReadFailure where failure.code == "CHAT_NOT_IN_LIST" {
-                guard recoverList(lastSeenIndex: record.lastSeenIndex), let recovered = access else {
+                guard try recoverList(lastSeenIndex: record.lastSeenIndex), let recovered = access else {
                     throw withRecoveryDetails(failure)
                 }
                 listAccess = recovered
@@ -558,7 +608,7 @@ struct ReadCommand: ParsableCommand {
         case .name(let query):
             var (choice, rows) = locator.choose(query: query, in: listAccess)
             if case .none = choice, locator.existingWindow(query: query) == nil,
-               recoverList(lastSeenIndex: nil), let recovered = access
+               try recoverList(lastSeenIndex: nil), let recovered = access
             {
                 listAccess = recovered
                 (choice, rows) = locator.choose(query: query, in: listAccess)
@@ -593,7 +643,8 @@ struct ReadCommand: ParsableCommand {
 
         let openedRoom: ChatRoomMenuOpener.OpenedRoom
         do {
-            openedRoom = try ChatRoomMenuOpener(kakao: kakao, runner: runner).open(row, access: listAccess, skipUnread: skipUnread)
+            openedRoom = try ChatRoomMenuOpener(kakao: kakao, runner: runner, activity: session.activity)
+                .open(row, access: listAccess, skipUnread: skipUnread)
         } catch let failure as ReadFailure {
             throw withRecoveryDetails(failure)
         }
@@ -817,6 +868,7 @@ struct ReadCommand: ParsableCommand {
         let interrupted: Bool
         let truncatedMessages: Int
         let fullText: FullTextFetcher.Report?
+        let waitedForUserMs: Int
 
         enum CodingKeys: String, CodingKey {
             case openedVia = "opened_via"
@@ -836,6 +888,7 @@ struct ReadCommand: ParsableCommand {
             case interrupted
             case truncatedMessages = "truncated_messages"
             case fullText = "full_text"
+            case waitedForUserMs = "waited_for_user_ms"
         }
 
         func encode(to encoder: Encoder) throws {
@@ -857,6 +910,7 @@ struct ReadCommand: ParsableCommand {
             try container.encode(interrupted, forKey: .interrupted)
             try container.encode(truncatedMessages, forKey: .truncatedMessages)
             try container.encode(fullText, forKey: .fullText)
+            try container.encode(waitedForUserMs, forKey: .waitedForUserMs)
         }
     }
 
@@ -937,7 +991,8 @@ struct ReadCommand: ParsableCommand {
                     scrollback: outcome.result.scrollback,
                     interrupted: outcome.result.interrupted,
                     truncatedMessages: items.filter(\.truncated).count,
-                    fullText: outcome.result.fullText
+                    fullText: outcome.result.fullText,
+                    waitedForUserMs: outcome.waitedForUserMs
                 )
             )
     }
@@ -1163,8 +1218,9 @@ struct ReadCommand: ParsableCommand {
     }
 
     /// Reads each chat in turn with one session (one permission and login check, one AX setup).
-    /// A failing chat does not stop the others; every chat gets a result. Exit status: 0 when
-    /// all succeeded, 130 when interrupted, otherwise 1.
+    /// A failing chat does not stop the others, except KAKAOTALK_IN_USE: the remaining chats are
+    /// then not attempted. Every chat gets a result. Exit status: 0 when all succeeded, 130 when
+    /// interrupted, 75 when KakaoTalk was in use, otherwise 1.
     private func runBatch() throws {
         let batchStart = Date()
         var entries: [(id: String, outcome: Result<ReadOutcome, ReadFailure>)] = []
@@ -1175,6 +1231,7 @@ struct ReadCommand: ParsableCommand {
                 try checkUsage()
                 let ids = try batchChatIDs()
                 var session = try startSession()
+                var inUse: ReadFailure?
                 for id in ids {
                     if ReadInterruption.requested {
                         entries.append((id, .failure(ReadFailure(
@@ -1184,12 +1241,29 @@ struct ReadCommand: ParsableCommand {
                         ))))
                         continue
                     }
+                    if let inUse {
+                        // KakaoTalk stayed in use for a whole wait budget: do not wait again per chat.
+                        entries.append((id, .failure(ReadFailure(
+                            code: inUse.code,
+                            message: "Not attempted: KakaoTalk was in use when an earlier chat was due.",
+                            hint: inUse.hint,
+                            exitCode: inUse.exitCode
+                        ))))
+                        continue
+                    }
+                    let startedAt = Date()
+                    let waitedBefore = session.activity.totalWaited
+                    session.activity.startNewBudget()
                     do {
                         let target = try Self.target(forChatID: id)
                         session.runner.log("read: batch chat \(entries.count + 1)/\(ids.count) \(id)")
-                        entries.append((id, .success(try readRoom(target, session: session, startedAt: Date()))))
+                        try session.activity.waitUntilClear(.nextChat)
+                        entries.append((id, .success(try readRoom(target, session: session, startedAt: startedAt, waitedBefore: waitedBefore))))
                     } catch let failure as ReadFailure {
                         entries.append((id, .failure(failure)))
+                        if failure.code == "KAKAOTALK_IN_USE" {
+                            inUse = failure
+                        }
                     } catch {
                         entries.append((id, .failure(ReadFailure(code: "READ_FAILED", message: "\(error)"))))
                     }
@@ -1241,11 +1315,17 @@ struct ReadCommand: ParsableCommand {
             }
         }
 
-        let failed = entries.filter { if case .failure = $0.outcome { return true } else { return false } }.count
+        let failures = entries.compactMap { entry -> ReadFailure? in
+            if case .failure(let failure) = entry.outcome { return failure }
+            return nil
+        }
         if interrupted {
             throw ExitCode(ReadFailure.interruptedExitCode)
         }
-        if failed > 0 {
+        if failures.contains(where: { $0.code == "KAKAOTALK_IN_USE" }) {
+            throw ExitCode(UserActivityPolicy.inUseExitCode)
+        }
+        if !failures.isEmpty {
             throw ExitCode(1)
         }
     }

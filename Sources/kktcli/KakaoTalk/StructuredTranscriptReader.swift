@@ -245,11 +245,16 @@ struct StructuredTranscriptReader {
     ) -> FullTextFetcher.Report {
         var report = FullTextFetcher.Report()
         var attempts = 0
+        var blocked: String?
         for index in selected.indices where selected[index].truncated {
             report.requested += 1
             guard let cutText = selected[index].cutText else { continue }
             if ReadInterruption.requested {
                 report.failures.append(.init(messageIndex: index, reason: "skipped: interrupted"))
+                continue
+            }
+            if let blocked {
+                report.failures.append(.init(messageIndex: index, reason: "skipped: \(blocked)"))
                 continue
             }
             if attempts >= FullTextFetcher.maximumFetches {
@@ -274,6 +279,12 @@ struct StructuredTranscriptReader {
                 }
             case .failed(let reason):
                 report.failures.append(.init(messageIndex: index, reason: reason))
+            case .blocked(let failure):
+                // KakaoTalk stayed in use: the rest keeps its cut text; the read itself goes on.
+                blocked = "\(failure.code): \(failure.message)"
+                report.failures.append(.init(messageIndex: index, reason: blocked ?? failure.code))
+            case .deferred:
+                report.failures.append(.init(messageIndex: index, reason: "not pressed"))
             }
         }
         runner.log("read: full text fetched for \(report.fetched) of \(report.requested) truncated message(s)")

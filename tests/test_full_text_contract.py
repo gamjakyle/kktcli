@@ -26,7 +26,7 @@ class FullTextContractTests(unittest.TestCase):
     def test_full_text_is_opt_in_and_not_background_safe(self) -> None:
         read = READ_COMMAND.read_text(encoding="utf-8")
         self.assertIn("var fullText: Bool = false", read)
-        self.assertIn("fullText: fullText ? FullTextFetcher(kakao: kakao, runner: runner) : nil", read)
+        self.assertIn("fullText: fullText ? FullTextFetcher(kakao: kakao, runner: runner, activity: session.activity) : nil", read)
         self.assertIn("if fullText && backgroundSafe {", read)
         reader = READER.read_text(encoding="utf-8")
         self.assertIn("if let fullText {", reader)

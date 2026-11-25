@@ -14,7 +14,7 @@ class OpenChatWindowContractTests(unittest.TestCase):
         opener = OPENER.read_text(encoding="utf-8")
         self.assertIn("OpenedWindowRule.match(rowTitle: title, candidates: candidates)", opener)
         self.assertIn("OpenedWindowRule.untitledNewWindow(in: candidates)", opener)
-        self.assertIn("locator.looksLikeChatWindow(windows[index])", opener)
+        self.assertIn("let classified = locator.classifyWindow(windows[index])", opener)
 
     def test_a_failed_open_closes_every_window_that_appeared_after_the_press(self) -> None:
         opener = OPENER.read_text(encoding="utf-8")

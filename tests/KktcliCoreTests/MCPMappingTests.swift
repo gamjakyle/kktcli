@@ -4,15 +4,28 @@ import Testing
 
 @Suite("MCP: read invocation, timeouts and error codes")
 struct MCPMappingTests {
-    @Test("Defaults: JSON read with an 8 s call timeout, no extra flags (unread rooms are opened)")
+    @Test("Defaults: JSON read, no extra flags; 8 s plus the 30 s wait for an idle user")
     func defaults() {
         let request = MCPReadRequest(chat: "가족")
         #expect(request.arguments == ["read", "가족", "--json", "--limit", "20", "--layout", "preserve"])
         #expect(!request.skipUnread)
         #expect(!request.arguments.contains("--skip-unread"))
         #expect(!request.arguments.contains("--allow-unread"))
+        #expect(!request.arguments.contains("--allow-activate"))
+        #expect(request.timeout == 8 + 30)
+        #expect(MCPReadRequest(chat: "가족", deepRecovery: true).timeout == 15 + 30)
+    }
+
+    @Test("idle_seconds, wait_for_idle and allow_activate map to read flags and the timeout")
+    func activityOptions() {
+        let request = MCPReadRequest(chat: "가족", idleSeconds: 5, waitForIdleSeconds: 0, allowActivate: true)
+        #expect(request.arguments.suffix(5) == ["--idle-seconds", "5", "--wait-for-idle", "0", "--allow-activate"])
+        // Failing at once (wait 0) keeps the plain 8 s call timeout.
         #expect(request.timeout == 8)
-        #expect(MCPReadRequest(chat: "가족", deepRecovery: true).timeout == 15)
+        let capped = MCPReadRequest(chat: "가족", idleSeconds: 9999, waitForIdleSeconds: 9999)
+        #expect(capped.arguments.contains("600"))
+        #expect(capped.timeout == 8 + 600)
+        #expect(MCPReadRequest(chat: "가족", waitForIdleSeconds: 12.5).timeout == 8 + 12.5)
     }
 
     @Test("chat_id wins over a name, and the limit is bounded")
@@ -32,21 +45,21 @@ struct MCPMappingTests {
         #expect(request.arguments.contains("--scrollback"))
         #expect(request.arguments.suffix(2) == ["--scrollback-timeout", "10"])
         // Explicit scrollback extends the call timeout by its budget plus a margin.
-        #expect(request.timeout == 8 + 10 + 2)
+        #expect(request.timeout == 8 + 30 + 10 + 2)
 
         let off = MCPReadRequest(chat: "가족", scrollback: false)
         #expect(off.arguments.contains("--no-scrollback"))
-        #expect(off.timeout == 8)
+        #expect(off.timeout == 8 + 30)
 
         let automatic = MCPReadRequest(chat: "가족", scrollbackSeconds: 2.5)
         #expect(!automatic.arguments.contains("--scrollback"))
         #expect(!automatic.arguments.contains("--no-scrollback"))
         #expect(automatic.arguments.suffix(2) == ["--scrollback-timeout", "2.5"])
-        #expect(automatic.timeout == 8)
+        #expect(automatic.timeout == 8 + 30)
 
         let capped = MCPReadRequest(chat: "가족", scrollback: true, scrollbackSeconds: 999)
         #expect(capped.arguments.suffix(2) == ["--scrollback-timeout", "60"])
-        #expect(capped.timeout == 8 + 60 + 2)
+        #expect(capped.timeout == 8 + 30 + 60 + 2)
     }
 
     @Test("read --json error documents keep their own code, message, hint and details")
@@ -60,7 +73,7 @@ struct MCPMappingTests {
         #expect(parsed?.hint == "Run without --skip-unread to open it; that sends read receipts like opening it by hand.")
         #expect(parsed?.details == ["unread_before": "안읽음 2"])
 
-        for code in ["UNREAD_UNVERIFIED", "CHAT_NOT_IN_LIST", "CHAT_WINDOW_NOT_OPENED", "MENU_UNAVAILABLE", "MENU_ITEM_MISSING", "ROW_CHANGED"] {
+        for code in ["UNREAD_UNVERIFIED", "CHAT_NOT_IN_LIST", "CHAT_WINDOW_NOT_OPENED", "MENU_UNAVAILABLE", "MENU_ITEM_MISSING", "ROW_CHANGED", "KAKAOTALK_IN_USE", "MAIN_WINDOW_NOT_VISIBLE", "OPEN_CHAT_LIST"] {
             let document = #"{"ok":false,"error":{"code":"\#(code)","message":"m","hint":null}}"#
             #expect(MCPErrorMapping.code(returnCode: 1, stdout: document, stderr: "") == code)
             #expect(MCPErrorMapping.hint(for: code) != MCPErrorMapping.hint(for: "SOMETHING_ELSE"))

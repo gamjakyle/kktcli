@@ -257,7 +257,7 @@ private final class KktcliMCPServer {
                         "name": "kktcli",
                         "version": serverVersion,
                     ],
-                    "instructions": "Use kktcli_read for read-only operations. It opens rooms with unread messages like any other, which sends read receipts exactly as opening them by hand; pass skip_unread=true to leave such rooms unopened (UNREAD_REFUSED). meta.read.unread_before / unread_after / marked_read report the chat-list badge before and after. Use kktcli_send and kktcli_send_image only when the user explicitly asked to send, with confirm=false (or omitted); confirm=true returns CONFIRMATION_REQUIRED without sending. Never send in bulk.",
+                    "instructions": "Use kktcli_read for read-only operations. It opens rooms with unread messages like any other, which sends read receipts exactly as opening them by hand; pass skip_unread=true to leave such rooms unopened (UNREAD_REFUSED). meta.read.unread_before / unread_after / marked_read report the chat-list badge before and after. While the user is busy in KakaoTalk it waits (KAKAOTALK_IN_USE after wait_for_idle); it never brings KakaoTalk to the front unless allow_activate=true (MAIN_WINDOW_NOT_VISIBLE otherwise). Use kktcli_send and kktcli_send_image only when the user explicitly asked to send, with confirm=false (or omitted); confirm=true returns CONFIRMATION_REQUIRED without sending. Never send in bulk.",
                     "meta": [
                         "startup_check": startupCheck,
                     ],
@@ -329,6 +329,23 @@ private final class KktcliMCPServer {
                             "minimum": 0,
                             "maximum": MCPReadRequest.maximumScrollbackSeconds,
                             "description": "Seconds for loading older messages (kktcli default 4).",
+                        ],
+                        "idle_seconds": [
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": UserActivityPolicy.maximumSeconds,
+                            "description": "While KakaoTalk is in front, press nothing until the keyboard and mouse were idle this many seconds (default 10).",
+                        ],
+                        "wait_for_idle": [
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": UserActivityPolicy.maximumSeconds,
+                            "description": "Seconds to wait for that before failing with KAKAOTALK_IN_USE (default 30; 0 fails at once). The call timeout is extended by it.",
+                        ],
+                        "allow_activate": [
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Allow bringing KakaoTalk to the front when its main window is not visible (closed, minimised, or on another desktop or full-screen Space); may switch the user's desktop. Without it such reads fail with MAIN_WINDOW_NOT_VISIBLE.",
                         ],
                         "include_system": [
                             "type": "boolean",
@@ -527,6 +544,22 @@ private final class KktcliMCPServer {
             scrollbackSeconds = number.doubleValue
         }
 
+        var waitSeconds: [String: Double] = [:]
+        for key in ["idle_seconds", "wait_for_idle"] {
+            guard let raw = arguments[key], !(raw is NSNull) else { continue }
+            guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+                return errorPayload(
+                    code: "INVALID_ARGUMENT",
+                    message: "\(key) must be a number of seconds",
+                    hint: "Use a number between 0 and \(Int(UserActivityPolicy.maximumSeconds)).",
+                    rawStdout: "",
+                    rawStderr: "",
+                    latencyMs: 0
+                )
+            }
+            waitSeconds[key] = number.doubleValue
+        }
+
         let request = MCPReadRequest(
             chat: chat,
             chatID: chatID,
@@ -540,7 +573,10 @@ private final class KktcliMCPServer {
             skipUnread: boolValue(arguments["skip_unread"], defaultValue: false),
             includeSystem: boolValue(arguments["include_system"], defaultValue: false),
             scrollback: optionalBoolValue(arguments["scrollback"]),
-            scrollbackSeconds: scrollbackSeconds
+            scrollbackSeconds: scrollbackSeconds,
+            idleSeconds: waitSeconds["idle_seconds"],
+            waitForIdleSeconds: waitSeconds["wait_for_idle"],
+            allowActivate: boolValue(arguments["allow_activate"], defaultValue: false)
         )
         let backgroundSafe = request.backgroundSafe
         let traceAX = request.traceAX

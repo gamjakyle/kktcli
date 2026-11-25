@@ -22,6 +22,11 @@ public struct MCPReadRequest: Equatable, Sendable {
     /// (The tool's old `allow_unread` argument is accepted and ignored by the server.)
     public var skipUnread: Bool
     public var includeSystem: Bool
+    /// `--idle-seconds` / `--wait-for-idle` (nil = kktcli's defaults, 10 s / 30 s).
+    public var idleSeconds: Double?
+    public var waitForIdleSeconds: Double?
+    /// `--allow-activate`: bring KakaoTalk to the front when its main window is not visible.
+    public var allowActivate: Bool
     /// nil = automatic (only when fewer than `limit` messages are loaded; the CLI keeps it
     /// inside the default timeout), true = `--scrollback`, false = `--no-scrollback`.
     public var scrollback: Bool?
@@ -39,7 +44,10 @@ public struct MCPReadRequest: Equatable, Sendable {
         skipUnread: Bool = false,
         includeSystem: Bool = false,
         scrollback: Bool? = nil,
-        scrollbackSeconds: Double? = nil
+        scrollbackSeconds: Double? = nil,
+        idleSeconds: Double? = nil,
+        waitForIdleSeconds: Double? = nil,
+        allowActivate: Bool = false
     ) {
         self.chat = chat
         self.chatID = chatID
@@ -53,6 +61,14 @@ public struct MCPReadRequest: Equatable, Sendable {
         self.includeSystem = includeSystem
         self.scrollback = scrollback
         self.scrollbackSeconds = scrollbackSeconds
+        self.idleSeconds = idleSeconds
+        self.waitForIdleSeconds = waitForIdleSeconds
+        self.allowActivate = allowActivate
+    }
+
+    /// Bounded like the CLI options (0–600 s).
+    private static func boundedSeconds(_ seconds: Double) -> Double {
+        min(max(0, seconds), UserActivityPolicy.maximumSeconds)
     }
 
     public var boundedLimit: Int {
@@ -84,13 +100,21 @@ public struct MCPReadRequest: Equatable, Sendable {
         if let scrollbackSeconds {
             arguments += ["--scrollback-timeout", Self.format(min(max(0, scrollbackSeconds), Self.maximumScrollbackSeconds))]
         }
+        if let idleSeconds {
+            arguments += ["--idle-seconds", Self.format(Self.boundedSeconds(idleSeconds))]
+        }
+        if let waitForIdleSeconds {
+            arguments += ["--wait-for-idle", Self.format(Self.boundedSeconds(waitForIdleSeconds))]
+        }
+        if allowActivate { arguments.append("--allow-activate") }
         return arguments
     }
 
     /// 8 s (15 s with deep recovery), extended by the scrollback budget only when scrollback
-    /// was requested explicitly.
+    /// was requested explicitly, and always by the wait for an idle user (`wait_for_idle`).
     public var timeout: Double {
         var timeout = deepRecovery ? Self.deepRecoveryTimeout : Self.defaultTimeout
+        timeout += Self.boundedSeconds(waitForIdleSeconds ?? UserActivityPolicy.defaultWaitSeconds)
         if scrollback == true {
             let seconds = min(max(0, scrollbackSeconds ?? Self.defaultScrollbackSeconds), Self.maximumScrollbackSeconds)
             timeout += seconds + 2
@@ -165,6 +189,12 @@ public enum MCPErrorMapping {
         switch code {
         case "KKTCLI_BIN_NOT_FOUND":
             return "The kktcli binary could not be launched; check that it exists and is executable."
+        case "KAKAOTALK_IN_USE":
+            return "KakaoTalk was in front and in use for the whole wait, so nothing was pressed (a window opened then would take the user's typing). Retry later, or raise wait_for_idle."
+        case "MAIN_WINDOW_NOT_VISIBLE":
+            return "KakaoTalk's main window is closed, minimised, or on another desktop or full-screen Space, and reopening it would bring KakaoTalk to the front. Ask the user to show KakaoTalk, or retry with allow_activate=true only if they agree to KakaoTalk coming to the front."
+        case "OPEN_CHAT_LIST":
+            return "This open-chat row opens a list of 1:1 open-chat conversations, not a chat; reading those is not supported. The list window was closed."
         case "UNREAD_REFUSED":
             return "skip_unread=true left the room unopened because it shows unread messages. Reading it with skip_unread=false (the default) opens it, which sends read receipts like opening it by hand."
         case "UNREAD_UNVERIFIED":

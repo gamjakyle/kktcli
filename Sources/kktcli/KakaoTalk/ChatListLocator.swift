@@ -107,14 +107,15 @@ struct ChatListLocator {
         case openedViaOpenCommand = "opened_via_open_command"
     }
 
-    /// Returns the main window. A closed one is brought back by pressing KakaoTalk's
-    /// "카카오톡 열기" menu item (`showFirstWindow:`); `open KakaoTalk.app`, which activates
+    /// Returns the main window. A missing one is brought back by pressing KakaoTalk's
+    /// "카카오톡 열기" menu item (`showFirstWindow:`) only as `access` allows (KakaoTalk already
+    /// frontmost, or --allow-activate; idle user); `open KakaoTalk.app`, which activates
     /// KakaoTalk, is only used as a last resort when `allowOpenCommand` (--deep-recovery).
-    func requireMainWindow(allowOpenCommand: Bool) throws -> (window: UIElement, action: MainWindowAction?) {
+    func requireMainWindow(allowOpenCommand: Bool, access: MainWindowAccess) throws -> (window: UIElement, action: MainWindowAction?) {
         if let main = mainWindow() {
             return (main, nil)
         }
-        let pressed = pressShowMainWindowMenuItem()
+        let pressed = try access.reopen(kakao: kakao, locator: self)
         if pressed, let main = waitForMainWindow(timeout: 3.0) {
             return (main, .openedViaMenuItem)
         }
@@ -129,7 +130,7 @@ struct ChatListLocator {
         }
 
         runner.log("read: main window still missing; reopening it via open KakaoTalk.app")
-        _ = KakaoTalkApp.forceOpen(timeout: 1.0)
+        try access.forceOpen()
         if let main = waitForMainWindow(timeout: 3.0) {
             return (main, .openedViaOpenCommand)
         }
@@ -140,11 +141,19 @@ struct ChatListLocator {
         )
     }
 
+    enum MainWindowPress {
+        case pressed
+        /// The item was not found (or the press failed).
+        case unavailable
+        /// `beforePress` said no right before the press; nothing was pressed.
+        case deferred
+    }
+
     /// Presses KakaoTalk's menu item "카카오톡 열기" (identifier `showFirstWindow:`) and nothing
     /// else. The item is looked up below the application element (its menu-extra and menu bar,
-    /// not inside windows) and re-verified right before the AXPress.
-    @discardableResult
-    func pressShowMainWindowMenuItem() -> Bool {
+    /// not inside windows) and re-verified right before the AXPress, together with
+    /// `beforePress` (the user-activity re-check). Callers go through `MainWindowAccess`.
+    func pressShowMainWindowMenuItem(beforePress: () -> Bool) -> MainWindowPress {
         let application = kakao.applicationElement.axElement
         var roots: [AXUIElement] = []
         if let extras = AXNodeReader.elementAttribute(application, kAXExtrasMenuBarAttribute) {
@@ -162,12 +171,15 @@ struct ChatListLocator {
             guard MainWindowMenuItem.isShowMainWindowItem(AXNodeReader.read(item.element).snapshot) else {
                 continue
             }
+            guard beforePress() else {
+                return .deferred
+            }
             let status = AXNodeReader.perform(item.element, kAXPressAction)
             runner.log("read: pressed \(MainWindowMenuItem.title) (\(MainWindowMenuItem.identifier)) status=\(status.rawValue)")
-            return status == .success || status == .cannotComplete
+            return status == .success || status == .cannotComplete ? .pressed : .unavailable
         }
         runner.log("read: \(MainWindowMenuItem.title) menu item unavailable")
-        return false
+        return .unavailable
     }
 
     /// Waits for the window identified "Main Window".
@@ -182,24 +194,32 @@ struct ChatListLocator {
         return nil
     }
 
-    /// The window shows a chat: its transcript scroll area `_NS:32` holds an AXTable, or it has
-    /// the message input `_NS:51` (an AXTextArea). Reads only.
-    func looksLikeChatWindow(_ window: UIElement) -> Bool {
-        for child in AXNodeReader.children(window.axElement) {
-            let node = AXNodeReader.read(child, depth: 1)
-            if node.snapshot.role == AXRoleName.scrollArea,
-               node.snapshot.identifier == Self.transcriptScrollAreaIdentifier,
-               node.children.contains(where: { AXNodeReader.read($0).snapshot.role == AXRoleName.table })
-            {
-                return true
-            }
-            if node.snapshot.role == AXRoleName.textArea, node.snapshot.identifier == Self.messageInputIdentifier {
-                return true
+    /// What the window shows (`KakaoWindowClassifier`): a chat, the open-chat conversation
+    /// list, or something unknown. Reads only; each direct child is flattened on its own budget
+    /// so a long transcript cannot hide the others. `rowCount` is the open-chat list table's
+    /// row count when that is what the window shows.
+    func classifyWindow(_ window: UIElement) -> (kind: KakaoWindowKind, rowCount: Int?) {
+        let windowNode = AXNodeReader.read(window.axElement)
+        var nodes = [windowNode.snapshot]
+        for child in windowNode.children {
+            nodes += AXNodeReader.flatten(child, maxDepth: 4, budget: 300).map { snapshot in
+                var shifted = snapshot
+                shifted.depth += 1
+                return shifted
             }
         }
-        return AXNodeReader.firstDescendant(of: window.axElement, maxNodes: 150, where: {
-            $0.snapshot.role == AXRoleName.textArea && $0.snapshot.identifier == Self.messageInputIdentifier
-        }) != nil
+        let kind = KakaoWindowClassifier.classify(nodes)
+        guard case .openChatList = kind else {
+            return (kind, nil)
+        }
+        let table = windowNode.children
+            .first { AXNodeReader.read($0).snapshot.identifier == KakaoWindowClassifier.openChatListScrollAreaIdentifier }
+            .flatMap { scrollArea in
+                AXNodeReader.children(scrollArea).first {
+                    AXNodeReader.read($0).snapshot.identifier == KakaoWindowClassifier.openChatListTableIdentifier
+                }
+            }
+        return (kind, table.map { AXNodeReader.rowCount(of: $0) })
     }
 
     func hasTranscript(_ window: UIElement) -> Bool {

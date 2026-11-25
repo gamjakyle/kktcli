@@ -16,6 +16,11 @@ import KktcliCore
 /// A window that appears after the press and did not exist before was opened by this
 /// command. If none of them is accepted as the room, every such window is closed with its own
 /// close button before the error is reported, so no window is left behind.
+///
+/// While the user is busy with KakaoTalk in front, a window opened now would become key and
+/// take their typing, so the menu is shown only after `UserActivityGuard` allows it, and the
+/// press is re-checked right before it happens (the menu is cancelled and the wait resumes
+/// when the user became active in between).
 struct ChatRoomMenuOpener {
     struct OpenedRoom {
         let window: UIElement
@@ -35,10 +40,25 @@ struct ChatRoomMenuOpener {
     private static let menuReadTimeout: Float = 1.0
     private static let popupMenuWindowLayer = 101
 
+    /// Exit status for a row that opens something that is not a chat (OPEN_CHAT_LIST).
+    static let notAChatExitCode: Int32 = 4
+
     let kakao: KakaoTalkApp
     let runner: AXActionRunner
+    let activity: UserActivityGuard
 
     func open(_ row: LocatedChatRow, access: ChatListAccess, skipUnread: Bool) throws -> OpenedRoom {
+        while true {
+            try activity.waitUntilClear(.openChatRoom)
+            if let opened = try openOnce(row, access: access, skipUnread: skipUnread) {
+                return opened
+            }
+            // The user became active right before the press: the menu was cancelled; wait again.
+        }
+    }
+
+    /// One attempt; nil when the user-activity re-check right before the press said no.
+    private func openOnce(_ row: LocatedChatRow, access: ChatListAccess, skipUnread: Bool) throws -> OpenedRoom? {
         try ensureListIsShowing(access)
         try verify(row, skipUnread: skipUnread, stage: "before scrolling the list")
 
@@ -99,6 +119,10 @@ struct ChatRoomMenuOpener {
             cancel(menu)
             throw error
         }
+        guard activity.mayPressNow(.openChatRoom) else {
+            cancel(menu)
+            return nil
+        }
 
         AXNodeReader.setMessagingTimeout(item.element, seconds: Self.menuMessagingTimeout)
         let pressStatus = AXNodeReader.perform(item.element, kAXPressAction)
@@ -113,10 +137,31 @@ struct ChatRoomMenuOpener {
             cancel(menu)
         }
         let details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)
+        if let list = opened.openChatList {
+            throw Self.openChatListFailure(row: row, list: list, rowCount: opened.listRowCount, details: details)
+        }
         throw ReadFailure(
             code: "CHAT_WINDOW_NOT_OPENED",
             message: "No chat window for '\(row.title)' was recognised after pressing \(MenuItemSafety.openChatRoomTitle) (AXPress status \(pressStatus.rawValue)).",
             hint: "Retry, or check KakaoTalk for a dialog.",
+            details: details
+        )
+    }
+
+    /// The row opened KakaoTalk's list of 1:1 open-chat conversations instead of a chat.
+    /// Nothing in that window was pressed; it has been closed with its own close button.
+    static func openChatListFailure(row: LocatedChatRow, list: OpenChatList, rowCount: Int?, details: [String: String]) -> ReadFailure {
+        let count = rowCount ?? list.conversations.count
+        var details = details
+        details["conversation_count"] = String(count)
+        details["conversations"] = list.conversations
+            .map { conversation in conversation.time.map { "\(conversation.title) (\($0))" } ?? conversation.title }
+            .joined(separator: "\n")
+        return ReadFailure(
+            code: "OPEN_CHAT_LIST",
+            message: "'\(row.title)' opens a list of \(count) 1:1 open-chat conversation(s), not a chat, so nothing was read.",
+            hint: "Reading the conversations in that list is not supported; the list window was closed without pressing anything in it.",
+            exitCode: notAChatExitCode,
             details: details
         )
     }
@@ -356,15 +401,25 @@ struct ChatRoomMenuOpener {
 
     // MARK: Opened window
 
+    private struct WaitResult {
+        var window: UIElement?
+        var untitled = false
+        var isNew = false
+        /// The single new untitled window is the open-chat conversation list.
+        var openChatList: OpenChatList?
+        var listRowCount: Int?
+    }
+
     /// Waits for the room's window (see `OpenedWindowRule`): a window titled for the row, or
     /// the single new window, also when it is untitled as long as it shows a chat. Team chats
     /// ("팀채팅, …"), the self chat and open chats ("오픈채팅, …") open windows titled without
-    /// the room-type prefix; open chats may open one with an empty title.
+    /// the room-type prefix; open chats may open one with an empty title. Some "오픈채팅, …"
+    /// rows open an untitled list of 1:1 conversations instead: recognised, the wait stops at once.
     private func waitForChatWindow(
         title: String,
         windowsBefore: [AXUIElement],
         timeout: TimeInterval = 3.0
-    ) -> (window: UIElement?, untitled: Bool, isNew: Bool) {
+    ) -> WaitResult {
         let locator = ChatListLocator(kakao: kakao, runner: runner)
         let deadline = Date().addingTimeInterval(timeout)
 
@@ -376,25 +431,34 @@ struct ChatRoomMenuOpener {
                     isNew: !windowsBefore.contains { CFEqual($0, window.axElement) }
                 )
             }
-            // The chat content check costs AX reads; only an untitled single new window needs it.
+            // The content check costs AX reads; only an untitled single new window needs it.
             if let index = OpenedWindowRule.untitledNewWindow(in: candidates) {
-                candidates[index].isChatWindow = locator.looksLikeChatWindow(windows[index])
+                let classified = locator.classifyWindow(windows[index])
+                switch classified.kind {
+                case .chat:
+                    candidates[index].isChatWindow = true
+                case .openChatList(let list):
+                    runner.log("read: the new untitled window is an open-chat list of \(classified.rowCount ?? list.conversations.count) conversation(s)")
+                    return WaitResult(openChatList: list, listRowCount: classified.rowCount)
+                case .unknown:
+                    candidates[index].isChatWindow = false
+                }
             }
             switch OpenedWindowRule.match(rowTitle: title, candidates: candidates) {
             case .titled(let index):
                 if candidates[index].isNew, !RoomTitle.windowMatchesRow(windowTitle: candidates[index].title, rowTitle: title) {
                     runner.log("read: accepting new window '\(candidates[index].title ?? "")' for row title '\(title)'")
                 }
-                return (windows[index], false, candidates[index].isNew)
+                return WaitResult(window: windows[index], isNew: candidates[index].isNew)
             case .untitled(let index):
                 runner.log("read: accepting the only new window, untitled but showing a chat, for row title '\(title)'")
-                return (windows[index], true, true)
+                return WaitResult(window: windows[index], untitled: true, isNew: true)
             case .none:
                 break
             }
             Thread.sleep(forTimeInterval: 0.05)
         } while Date() < deadline && !ReadInterruption.requested
 
-        return (nil, false, false)
+        return WaitResult()
     }
 }

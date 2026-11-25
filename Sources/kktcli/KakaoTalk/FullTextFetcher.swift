@@ -13,9 +13,12 @@ import KktcliCore
 /// - afterwards the close button of the one window that appeared after that press, or
 ///   AXCancel on a sheet or popover that appeared after it.
 ///
-/// What the press opens has not been observed yet. A new window, a sheet, a popover and the
-/// bubble expanding in place are handled; anything without a recognisable full text is closed
-/// again and the cut text is kept (`truncated: true`).
+/// On KakaoTalk 26.10.0 the press opened one window titled "Window" (live test, 4 of 4). A
+/// sheet, a popover and the bubble expanding in place are handled too; anything without a
+/// recognisable full text is closed again and the cut text is kept (`truncated: true`).
+///
+/// The window it opens becomes key when KakaoTalk is in front, so each press waits for
+/// `UserActivityGuard` and is re-checked right before it happens.
 struct FullTextFetcher {
     struct Report: Encodable {
         struct Failure: Encodable {
@@ -46,6 +49,10 @@ struct FullTextFetcher {
     enum Outcome {
         case fetched(String, leftOpen: String?)
         case failed(String)
+        /// The user was busy with KakaoTalk for the whole wait budget; nothing was pressed.
+        case blocked(ReadFailure)
+        /// The user-activity re-check right before the press said no (internal).
+        case deferred
     }
 
     /// At most this many presses per read.
@@ -57,8 +64,26 @@ struct FullTextFetcher {
 
     let kakao: KakaoTalkApp
     let runner: AXActionRunner
+    let activity: UserActivityGuard
 
     func fetch(row: AXUIElement, cutText: String, parts: TranscriptAXParts) -> Outcome {
+        while true {
+            do {
+                try activity.waitUntilClear(.seeAll)
+            } catch let failure as ReadFailure {
+                return .blocked(failure)
+            } catch {
+                return .failed("\(error)")
+            }
+            let outcome = attempt(row: row, cutText: cutText, parts: parts)
+            if case .deferred = outcome {
+                continue
+            }
+            return outcome
+        }
+    }
+
+    private func attempt(row: AXUIElement, cutText: String, parts: TranscriptAXParts) -> Outcome {
         guard let target = locate(in: row, cutText: cutText) else {
             return .failed("the row no longer shows this cut message")
         }
@@ -75,6 +100,9 @@ struct FullTextFetcher {
         }
         guard let again = locate(in: row, cutText: cutText), CFEqual(again.control, target.control) else {
             return .failed("the row changed before the press; nothing was pressed")
+        }
+        guard activity.mayPressNow(.seeAll) else {
+            return .deferred
         }
         AXNodeReader.setMessagingTimeout(target.control, seconds: 2.0)
         let status = AXNodeReader.perform(target.control, kAXPressAction)
