@@ -12,6 +12,10 @@ struct ReadCommand: ParsableCommand {
             Use either:
               kktcli read <chat>
               kktcli read --chat-id <chat-id>
+              kktcli read --chat-id <a> --chat-id <b> ... | --chat-ids-file <file>
+
+            Several chat_ids are read one after another in one run (one login check, one
+            Accessibility session) and printed as one JSON document with a result per chat.
 
             An already open chat window is read in place. Otherwise the chat is found in the chat
             list and opened through its context menu (채팅방 열기) with Accessibility actions only:
@@ -45,8 +49,14 @@ struct ReadCommand: ParsableCommand {
             """
     )
 
-    @Option(name: .long, help: "Read using a chat_id from 'kktcli chats'")
-    var chatID: String?
+    @Option(name: .customLong("chat-id"), help: "Read using a chat_id from 'kktcli chats'; repeat it to read several chats in one run")
+    var chatIDs: [String] = []
+
+    @Option(
+        name: .customLong("chat-ids-file"),
+        help: "Read every chat_id listed in this file, one per line (blank lines and lines starting with # are ignored)"
+    )
+    var chatIDsFile: String?
 
     @Argument(help: "Name of the chat to read from (partial match supported)")
     var chat: String?
@@ -138,6 +148,10 @@ struct ReadCommand: ParsableCommand {
     }
 
     func run() throws {
+        if isBatch {
+            try runBatch()
+            return
+        }
         var outcome: ReadOutcome?
         var failure: ReadFailure?
         // stdout must carry only the final JSON document: anything printed on the way
@@ -237,13 +251,28 @@ struct ReadCommand: ParsableCommand {
         return scrollback || !backgroundSafe
     }
 
+    /// Non-empty `--chat-id` values.
+    private var givenChatIDs: [String] {
+        chatIDs.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    /// The chat_id of a one-chat read (nil for a name or a batch).
+    private var chatID: String? {
+        givenChatIDs.count == 1 && chatIDsFile == nil ? givenChatIDs[0] : nil
+    }
+
+    /// Several chats: more than one --chat-id, or --chat-ids-file.
+    private var isBatch: Bool {
+        givenChatIDs.count > 1 || chatIDsFile != nil
+    }
+
     private func usageProblem() -> String? {
-        if let chatID, !chatID.isEmpty {
+        if !givenChatIDs.isEmpty || chatIDsFile != nil {
             if chat != nil {
-                return "Chat name cannot be provided together with --chat-id."
+                return "Chat name cannot be provided together with --chat-id or --chat-ids-file."
             }
         } else if (chat ?? "").isEmpty {
-            return "Chat name is required unless --chat-id is provided."
+            return "Chat name is required unless --chat-id or --chat-ids-file is provided."
         }
         if limit < 1 || limit > Self.maximumLimit {
             return "--limit must be between 1 and \(Self.maximumLimit)."
@@ -262,14 +291,33 @@ struct ReadCommand: ParsableCommand {
 
     private func performRead() throws -> ReadOutcome {
         let startedAt = Date()
+        try checkUsage()
+        let target = try resolveTarget()
+        let session = try startSession()
+        return try readRoom(target, session: session, startedAt: startedAt)
+    }
+
+    private func checkUsage() throws {
         if let problem = usageProblem() {
             throw ReadFailure(code: "INVALID_ARGUMENT", message: problem, exitCode: ExitCode.validationFailure.rawValue)
         }
         if allowUnread {
             writeStderr("Note: --allow-unread is deprecated and has no effect; chats with unread messages are opened by default (--skip-unread leaves them unopened).\n")
         }
-        let target = try resolveTarget()
+    }
 
+    /// What one run sets up once, whether it reads one chat or several.
+    private struct Session {
+        let runner: AXActionRunner
+        let kakao: KakaoTalkApp
+        let resolver: ChatWindowResolver
+        let locator: ChatListLocator
+        /// How a closed main window was brought back before the login check, if it was
+        /// (reported with the first chat only).
+        var mainWindowAction: ChatListLocator.MainWindowAction?
+    }
+
+    private func startSession() throws -> Session {
         guard AccessibilityPermission.ensureGranted() else {
             AccessibilityPermission.printInstructions()
             throw ReadFailure(
@@ -280,7 +328,6 @@ struct ReadCommand: ParsableCommand {
         }
 
         let runner = AXActionRunner(traceEnabled: traceAX)
-        let fetchedAt = Date()
 
         // A closed main window is brought back with KakaoTalk's "카카오톡 열기" menu item before
         // the login check runs; otherwise that check would reopen it with `open KakaoTalk.app`
@@ -315,6 +362,18 @@ struct ReadCommand: ParsableCommand {
         // From here on Ctrl-C / SIGTERM stops the bounded loops early instead of killing the
         // process, so a window opened below is still closed and a document is still printed.
         ReadInterruption.install()
+        return Session(runner: runner, kakao: kakao, resolver: chatWindowResolver, locator: locator, mainWindowAction: mainWindowAction)
+    }
+
+    /// Opens (or finds) one chat, reads it and closes what it opened. `startedAt` anchors the
+    /// automatic time budget (the MCP server stops `read` after 8 s).
+    private func readRoom(_ target: ReadTarget, session: Session, startedAt: Date) throws -> ReadOutcome {
+        let runner = session.runner
+        let kakao = session.kakao
+        let chatWindowResolver = session.resolver
+        let locator = session.locator
+        var mainWindowAction = session.mainWindowAction
+        let fetchedAt = Date()
         let opened: OpenedChat
         do {
             opened = try open(target, kakao: kakao, resolver: chatWindowResolver, locator: locator, runner: runner)
@@ -381,7 +440,14 @@ struct ReadCommand: ParsableCommand {
     }
 
     private func resolveTarget() throws -> ReadTarget {
-        if let chatID, !chatID.isEmpty {
+        if let chatID {
+            return try Self.target(forChatID: chatID)
+        }
+        return .name(chat ?? "")
+    }
+
+    private static func target(forChatID chatID: String) throws -> ReadTarget {
+        do {
             guard let record = ChatIdentityRegistryStore.shared.record(for: chatID) else {
                 throw ReadFailure(
                     code: "UNKNOWN_CHAT_ID",
@@ -391,7 +457,6 @@ struct ReadCommand: ParsableCommand {
             }
             return .chatID(chatID, record)
         }
-        return .name(chat ?? "")
     }
 
     private func open(
@@ -831,15 +896,28 @@ struct ReadCommand: ParsableCommand {
         return encoder
     }
 
+    private static func timestamp(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
     private func printOutcome(_ outcome: ReadOutcome) throws {
-        let items = outcome.result.items
         if json {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let payload = ReadJSONResponse(
+            let data = try Self.makeEncoder().encode(jsonResponse(outcome, chatID: chatID))
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data([0x0A]))
+            return
+        }
+        printText(outcome)
+    }
+
+    private func jsonResponse(_ outcome: ReadOutcome, chatID: String?) -> ReadJSONResponse {
+        let items = outcome.result.items
+        return ReadJSONResponse(
                 chat: outcome.chat,
                 chatID: chatID,
-                fetchedAt: formatter.string(from: outcome.fetchedAt),
+                fetchedAt: Self.timestamp(outcome.fetchedAt),
                 count: items.count,
                 messages: items.map(ReadMessageJSON.init(item:)),
                 meta: ReadMeta(
@@ -862,12 +940,10 @@ struct ReadCommand: ParsableCommand {
                     fullText: outcome.result.fullText
                 )
             )
-            let data = try Self.makeEncoder().encode(payload)
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data([0x0A]))
-            return
-        }
+    }
 
+    private func printText(_ outcome: ReadOutcome) {
+        let items = outcome.result.items
         print("Reading messages from: \(outcome.chat)\n")
         print("Recent messages (\(items.count)):\n")
         for (index, item) in items.enumerated() {
@@ -966,22 +1042,28 @@ struct ReadCommand: ParsableCommand {
 
     private func report(_ failure: ReadFailure) {
         if json {
-            let payload = ReadErrorJSON(
-                code: failure.code,
-                message: failure.message,
-                hint: failure.hint,
-                chat: chat,
-                chatID: chatID,
-                details: failure.details
-            )
-            if let data = try? Self.makeEncoder().encode(payload) {
+            if let data = try? Self.makeEncoder().encode(Self.errorJSON(failure, chat: chat, chatID: chatID)) {
                 FileHandle.standardOutput.write(data)
                 FileHandle.standardOutput.write(Data([0x0A]))
             }
             return
         }
+        Self.printFailureText(failure, label: chat ?? chatID ?? "")
+    }
 
-        print("Could not read '\(chat ?? chatID ?? "")': [\(failure.code)] \(failure.message)")
+    private static func errorJSON(_ failure: ReadFailure, chat: String?, chatID: String?) -> ReadErrorJSON {
+        ReadErrorJSON(
+            code: failure.code,
+            message: failure.message,
+            hint: failure.hint,
+            chat: chat,
+            chatID: chatID,
+            details: failure.details
+        )
+    }
+
+    private static func printFailureText(_ failure: ReadFailure, label: String) {
+        print("Could not read '\(label)': [\(failure.code)] \(failure.message)")
         if let hint = failure.hint {
             print("Hint: \(hint)")
         }
@@ -992,5 +1074,179 @@ struct ReadCommand: ParsableCommand {
 
     private func writeStderr(_ text: String) {
         FileHandle.standardError.write(Data(text.utf8))
+    }
+
+    // MARK: - Several chats in one run
+
+    /// One chat's result in a batch: the document a single read prints.
+    private enum BatchEntry: Encodable {
+        case success(ReadJSONResponse)
+        case failure(ReadErrorJSON)
+
+        var ok: Bool {
+            if case .success = self { return true }
+            return false
+        }
+
+        func encode(to encoder: Encoder) throws {
+            switch self {
+            case .success(let document):
+                try document.encode(to: encoder)
+            case .failure(let document):
+                try document.encode(to: encoder)
+            }
+        }
+    }
+
+    private struct BatchJSONResponse: Encodable {
+        let fetchedAt: String
+        let results: [BatchEntry]
+        let elapsedMs: Int
+        let interrupted: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case ok
+            case count
+            case fetchedAt = "fetched_at"
+            case results
+            case meta
+        }
+
+        enum MetaKeys: String, CodingKey {
+            case chats
+            case succeeded
+            case failed
+            case elapsedMs = "elapsed_ms"
+            case interrupted
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            let succeeded = results.filter(\.ok).count
+            try container.encode(succeeded == results.count, forKey: .ok)
+            try container.encode(results.count, forKey: .count)
+            try container.encode(fetchedAt, forKey: .fetchedAt)
+            try container.encode(results, forKey: .results)
+            var meta = container.nestedContainer(keyedBy: MetaKeys.self, forKey: .meta)
+            try meta.encode(results.count, forKey: .chats)
+            try meta.encode(succeeded, forKey: .succeeded)
+            try meta.encode(results.count - succeeded, forKey: .failed)
+            try meta.encode(elapsedMs, forKey: .elapsedMs)
+            try meta.encode(interrupted, forKey: .interrupted)
+        }
+    }
+
+    /// --chat-id values, then the lines of --chat-ids-file, without duplicates.
+    private func batchChatIDs() throws -> [String] {
+        var ids = givenChatIDs.map { $0.trimmingCharacters(in: .whitespaces) }
+        if let chatIDsFile {
+            let text: String
+            do {
+                text = try String(contentsOfFile: (chatIDsFile as NSString).expandingTildeInPath, encoding: .utf8)
+            } catch {
+                throw ReadFailure(
+                    code: "INVALID_ARGUMENT",
+                    message: "Could not read --chat-ids-file '\(chatIDsFile)': \(error.localizedDescription)",
+                    exitCode: ExitCode.validationFailure.rawValue
+                )
+            }
+            ids += text.split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        }
+        var seen = Set<String>()
+        let unique = ids.filter { seen.insert($0).inserted }
+        guard !unique.isEmpty else {
+            throw ReadFailure(code: "INVALID_ARGUMENT", message: "No chat_id was given.", exitCode: ExitCode.validationFailure.rawValue)
+        }
+        return unique
+    }
+
+    /// Reads each chat in turn with one session (one permission and login check, one AX setup).
+    /// A failing chat does not stop the others; every chat gets a result. Exit status: 0 when
+    /// all succeeded, 130 when interrupted, otherwise 1.
+    private func runBatch() throws {
+        let batchStart = Date()
+        var entries: [(id: String, outcome: Result<ReadOutcome, ReadFailure>)] = []
+        var fatal: ReadFailure?
+
+        withStdoutRedirectedToStderr(json) {
+            do {
+                try checkUsage()
+                let ids = try batchChatIDs()
+                var session = try startSession()
+                for id in ids {
+                    if ReadInterruption.requested {
+                        entries.append((id, .failure(ReadFailure(
+                            code: "INTERRUPTED",
+                            message: "Stopped before this chat was read.",
+                            exitCode: ReadFailure.interruptedExitCode
+                        ))))
+                        continue
+                    }
+                    do {
+                        let target = try Self.target(forChatID: id)
+                        session.runner.log("read: batch chat \(entries.count + 1)/\(ids.count) \(id)")
+                        entries.append((id, .success(try readRoom(target, session: session, startedAt: Date()))))
+                    } catch let failure as ReadFailure {
+                        entries.append((id, .failure(failure)))
+                    } catch {
+                        entries.append((id, .failure(ReadFailure(code: "READ_FAILED", message: "\(error)"))))
+                    }
+                    session.mainWindowAction = nil
+                }
+            } catch let failure as ReadFailure {
+                fatal = failure
+            } catch {
+                fatal = ReadFailure(code: "READ_FAILED", message: "\(error)")
+            }
+        }
+
+        if let fatal {
+            report(fatal)
+            throw ExitCode(fatal.exitCode)
+        }
+
+        let interrupted = ReadInterruption.requested
+        if json {
+            let results: [BatchEntry] = entries.map { entry in
+                switch entry.outcome {
+                case .success(let outcome):
+                    return .success(jsonResponse(outcome, chatID: entry.id))
+                case .failure(let failure):
+                    let record = ChatIdentityRegistryStore.shared.record(for: entry.id)
+                    return .failure(Self.errorJSON(failure, chat: record?.displayName, chatID: entry.id))
+                }
+            }
+            let payload = BatchJSONResponse(
+                fetchedAt: Self.timestamp(batchStart),
+                results: results,
+                elapsedMs: Int(Date().timeIntervalSince(batchStart) * 1000),
+                interrupted: interrupted
+            )
+            let data = try Self.makeEncoder().encode(payload)
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data([0x0A]))
+        } else {
+            for (position, entry) in entries.enumerated() {
+                print("=== [\(position + 1)/\(entries.count)] \(entry.id) ===")
+                switch entry.outcome {
+                case .success(let outcome):
+                    printText(outcome)
+                case .failure(let failure):
+                    let record = ChatIdentityRegistryStore.shared.record(for: entry.id)
+                    Self.printFailureText(failure, label: record?.displayName ?? entry.id)
+                    print("")
+                }
+            }
+        }
+
+        let failed = entries.filter { if case .failure = $0.outcome { return true } else { return false } }.count
+        if interrupted {
+            throw ExitCode(ReadFailure.interruptedExitCode)
+        }
+        if failed > 0 {
+            throw ExitCode(1)
+        }
     }
 }

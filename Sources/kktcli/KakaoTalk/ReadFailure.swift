@@ -6,6 +6,8 @@ import Foundation
 struct ReadFailure: Error, CustomStringConvertible {
     /// Exit status for refusals (unread room, unverifiable unread state).
     static let refusedExitCode: Int32 = 3
+    /// Ctrl-C / SIGTERM (128 + SIGINT).
+    static let interruptedExitCode: Int32 = 130
 
     var code: String
     var message: String
@@ -71,6 +73,6 @@ enum ReadInterruption {
 
     static func check(_ stage: String) throws {
         guard requested else { return }
-        throw ReadFailure(code: "INTERRUPTED", message: "Interrupted \(stage).", exitCode: 130)
+        throw ReadFailure(code: "INTERRUPTED", message: "Interrupted \(stage).", exitCode: ReadFailure.interruptedExitCode)
     }
 }

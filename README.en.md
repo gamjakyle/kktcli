@@ -134,6 +134,7 @@ be added again.
 ```bash
 kktcli chats --json --limit 30                    # rooms, chat_id, unread state
 kktcli read --chat-id "<chat_id>" --limit 20 --json
+kktcli read --chat-ids-file ids.txt --json          # several rooms in one run, one result each
 kktcli read "Room name" --limit 200 --scrollback   # include older messages
 kktcli read "Room name" --json --background-safe   # only read an already open window
 ```

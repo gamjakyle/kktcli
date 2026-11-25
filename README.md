@@ -130,6 +130,7 @@ kktcli status      # 손쉬운 사용 권한, 카카오톡 실행·로그인 상
 ```bash
 kktcli chats --json --limit 30                    # 방 목록, chat_id, 안읽음 여부
 kktcli read --chat-id "<chat_id>" --limit 20 --json
+kktcli read --chat-ids-file ids.txt --json          # 여러 방을 한 번에(방마다 결과 하나)
 kktcli read "방 이름" --limit 200 --scrollback      # 이전 메시지까지
 kktcli read "방 이름" --json --background-safe      # 이미 열린 창만 읽기
 ```

@@ -138,11 +138,14 @@ other, which marks them read (see [Unread rooms](#unread-rooms)).
 ```bash
 kktcli read <chat> [options]
 kktcli read --chat-id <chat-id> [options]
+kktcli read --chat-id <a> --chat-id <b> ... [options]
+kktcli read --chat-ids-file <file> [options]
 ```
 
 | Option | Description |
 |---|---|
-| `--chat-id ID` | A `chat_id` from `kktcli chats`. Mutually exclusive with a chat name. |
+| `--chat-id ID` | A `chat_id` from `kktcli chats`. Mutually exclusive with a chat name. Repeat it to read several chats in one run. |
+| `--chat-ids-file PATH` | Read every `chat_id` in the file, one per line (blank lines and `#` lines are ignored). |
 | `-l N`, `--limit N` | Maximum messages to return (1–50000). Default: `20`. |
 | `--json` | Exactly one JSON document on stdout, also on failure. |
 | `--skip-unread` | Do not open a room whose chat-list row shows unread messages; fail with `UNREAD_REFUSED` / `UNREAD_UNVERIFIED` (exit status 3) instead, so no read receipts are sent. |
@@ -435,6 +438,32 @@ uses `<name>` as `chat`. `meta.opened_via` is
 `meta.window` is `untouched`, `closed`, `kept_open` or `left_open`. `meta.unread_before`,
 `meta.unread_after` and `meta.marked_read` are described under
 [Unread rooms](#unread-rooms).
+
+### Several chats (`--chat-id` repeated or `--chat-ids-file`)
+
+The chats are read one after another in one process: the permission and login checks and
+the Accessibility setup happen once, and each chat is found from its registry row hint
+(the scan stops at the first match). Each chat is opened, read and closed before the next.
+One chat failing does not stop the others. The document has one result per chat, in
+order, each exactly the document a single read prints (`ok`, `chat`, `chat_id`,
+`messages`, `meta` or `error`, `details`):
+
+```json
+{
+  "count": 2,
+  "fetched_at": "2026-11-25T09:00:00.000Z",
+  "meta": { "chats": 2, "elapsed_ms": 5210, "failed": 1, "interrupted": false, "succeeded": 1 },
+  "ok": false,
+  "results": [
+    { "chat": "홍길동", "chat_id": "chat_7f42c5e1d9ab", "count": 20, "messages": [], "meta": {}, "ok": true },
+    { "chat": "가족", "chat_id": "chat_0b1d2e3f4a5c", "details": {}, "error": { "code": "CHAT_NOT_IN_LIST", "hint": "…", "message": "…" }, "ok": false }
+  ]
+}
+```
+
+(`messages` and `meta` shortened.) Exit status: `0` when every chat was read, `130` when
+interrupted (the chats not yet read get `INTERRUPTED`), otherwise `1`. Problems with the
+arguments, permission or login stop the whole run with a single error document.
 
 ### Errors
 
