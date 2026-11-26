@@ -94,7 +94,9 @@ class UserActivityContractTests(unittest.TestCase):
         lookup = read(SOURCES / "kktcli" / "KakaoTalk" / "KakaoWindowLookup.swift")
         self.assertIn("RemoteElementScan.ranges(cachedID: cachedID)", lookup)
         self.assertIn("break scan", lookup)
-        self.assertIn('.appendingPathComponent("ax-cache.json")', lookup)
+        # Its own file: ax-cache.json is the AX path cache's.
+        self.assertIn('.appendingPathComponent("main-window-id.json")', lookup)
+        self.assertNotIn('"ax-cache.json"', lookup)
         self.assertIn("mainWindowElementID(forPID: pid)", lookup)
         # The lookup only reads.
         for forbidden in ("perform(", "setNumber(", "kAXPressAction", "activate("):

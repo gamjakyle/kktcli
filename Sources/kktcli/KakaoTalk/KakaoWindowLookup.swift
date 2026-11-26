@@ -8,7 +8,7 @@ import KktcliCore
 /// kAXWindows lists only the windows on the current desktop or Space. A window on another
 /// desktop (or full-screen Space) is reached by element id (`RemoteAXElement`): the main
 /// window's id is looked for upward in chunks, stops at the first match and is cached in
-/// `~/.kktcli/ax-cache.json` for the same KakaoTalk process. When the symbol is unavailable,
+/// `~/.kktcli/main-window-id.json` for the same KakaoTalk process. When the symbol is unavailable,
 /// only kAXWindows is used, as before.
 ///
 /// New sources of windows go into `reachableWindows(remote:)` and `scanForMainWindow()`; the
@@ -218,19 +218,31 @@ struct KakaoWindowLookup {
     static func cacheURL() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".kktcli", isDirectory: true)
-            .appendingPathComponent("ax-cache.json")
+            .appendingPathComponent("main-window-id.json")
     }
 
+    static func cacheLockURL() -> URL {
+        cacheURL().deletingLastPathComponent().appendingPathComponent("main-window-id.lock")
+    }
+
+    /// Several kktcli processes may look the main window up at once: reads take a shared lock,
+    /// a write an exclusive one and replaces the file atomically (0600, `SharedFile`).
     private static func loadCache() -> AXElementCache? {
-        AXElementCache.decode(try? Data(contentsOf: cacheURL()))
+        SharedFile.withLock(cacheLockURL(), exclusive: false) {
+            AXElementCache.decode(try? Data(contentsOf: cacheURL()))
+        }
     }
 
     private static func saveCache(_ cache: AXElementCache) {
         guard let data = cache.encoded() else { return }
-        let url = cacheURL()
-        let directory = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        SharedFile.withLock(cacheLockURL(), exclusive: true) {
+            // Unchanged (another process found the same id): nothing to write.
+            if let current = AXElementCache.decode(try? Data(contentsOf: cacheURL())),
+               current.pid == cache.pid, current.mainWindowElementID == cache.mainWindowElementID
+            {
+                return
+            }
+            try? SharedFile.writeAtomically(data, to: cacheURL())
+        }
     }
 }

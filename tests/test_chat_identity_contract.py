@@ -31,19 +31,56 @@ class ChatIdentityContractTests(unittest.TestCase):
         resolve = assignment[assignment.index("public static func resolve("):]
         self.assertIn("matchGroup(rows: groupRows.map { rows[$0].features }, records: active.map(\\.features))", resolve)
         # Rows without an ID of their own (identical rows) get no record.
-        self.assertIn("where recordIndex == nil && !result.rowIDs[rowIndex].isEmpty", registry)
-        self.assertIn("for held in result.heldRecords {", registry)
+        registry_file = read(SOURCES / "KktcliCore" / "ChatIdentityRegistryFile.swift")
+        self.assertIn("where recordIndex == nil && !result.rowIDs[rowIndex].isEmpty", registry_file)
+        self.assertIn("for held in result.heldRecords {", registry_file)
 
     def test_registry_migrates_schema_1_and_keeps_retired_ids(self) -> None:
         registry = read(REGISTRY)
-        self.assertIn("static let schemaVersion = 3", registry)
-        self.assertIn("static let readableSchemaVersions: Set<Int> = [1, 2, 3]", registry)
-        self.assertIn("var retired: Bool?", registry)
-        self.assertIn("var lastTimeLabel: String?", registry)
-        self.assertIn("var memberCount: Int?", registry)
+        registry_file = read(SOURCES / "KktcliCore" / "ChatIdentityRegistryFile.swift")
+        self.assertIn("public static let schemaVersion = 3", registry_file)
+        self.assertIn("public static let readableSchemaVersions: Set<Int> = [1, 2, 3]", registry_file)
+        self.assertIn("public var retired: Bool?", registry_file)
+        self.assertIn("public var lastTimeLabel: String?", registry_file)
+        self.assertIn("public var memberCount: Int?", registry_file)
+        self.assertIn("static let schemaVersion = ChatIdentityRegistryDocument.schemaVersion", registry)
         # Rows without an ID are not watched.
         watch = read(SOURCES / "kktcli" / "Commands" / "WatchCommand.swift")
         self.assertIn("zip(located, ids).filter { !$0.1.isEmpty }", watch)
+
+    def test_concurrent_processes_never_write_back_a_stale_copy(self) -> None:
+        registry = read(REGISTRY)
+        # Every change goes through the locked read-modify-write; no whole-document writes and
+        # no per-process document copy in the store itself.
+        self.assertEqual(registry.count("file.update {"), 2)
+        for gone in ("cachedDocument", "persist(", "options: .atomic", "loadDocument("):
+            self.assertNotIn(gone, registry)
+        registry_file = read(SOURCES / "KktcliCore" / "ChatIdentityRegistryFile.swift")
+        body = registry_file[registry_file.index("public func update<T>("):registry_file.index("private struct Loaded")]
+        order = [
+            "SharedFile.withLock(lockURL, exclusive: true) {",
+            "var loaded = load()",
+            "let value = change(&document)",
+            "document.differsBeyondTimestamps(from: before)",
+            "SharedFile.writeAtomically(data, to: fileURL)",
+        ]
+        positions = [body.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('appendingPathComponent("chat-registry.lock")', registry_file)
+        self.assertIn("cache.stamp == stamp", registry_file)
+        shared = read(SOURCES / "KktcliCore" / "SharedFile.swift")
+        for text in ("flock(descriptor, exclusive ? LOCK_EX : LOCK_SH)", "O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode", "fsync(descriptor)", "rename(temp.path, url.path)", "mode: mode_t = 0o600"):
+            self.assertIn(text, shared)
+        # The AX path cache (ax-cache.json) and the element-id cache are written the same way.
+        path_cache = read(SOURCES / "kktcli" / "Accessibility" / "AXPathCache.swift")
+        for text in ('appendingPathComponent("ax-cache.lock")', "try SharedFile.withLock(lockURL, exclusive: true) {", "var document = readFromDisk()", "try SharedFile.writeAtomically(data, to: fileURL)", "cache.stamp == stamp"):
+            self.assertIn(text, path_cache)
+        for gone in ("cachedDocument", "options: .atomic)\n    }\n\n    private func emptyDocument", "func persist("):
+            self.assertNotIn(gone, path_cache)
+        lookup = read(SOURCES / "kktcli" / "KakaoTalk" / "KakaoWindowLookup.swift")
+        self.assertIn("SharedFile.withLock(cacheLockURL(), exclusive: true) {", lookup)
+        self.assertIn("try? SharedFile.writeAtomically(data, to: cacheURL())", lookup)
+        self.assertNotIn("options: .atomic", lookup)
 
     def test_lookups_never_rerun_the_assignment_for_one_row(self) -> None:
         locator = read(LOCATOR)

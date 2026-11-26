@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KktcliCore
 
 enum AXPathSlot: String, CaseIterable, Codable {
     case searchField
@@ -44,19 +45,26 @@ struct AXPathCacheStatus {
     let updatedAt: Date?
 }
 
+/// `~/.kktcli/ax-cache.json`, shared by concurrent kktcli processes like the chat registry
+/// (`SharedFile`): every change re-reads the file under an exclusive lock on
+/// `~/.kktcli/ax-cache.lock`, applies to that fresh copy and replaces the file atomically
+/// (0600); the in-process copy is only a read cache checked against the file's stamp.
 final class AXPathCacheStore: @unchecked Sendable {
     static let shared = AXPathCacheStore()
     static let schemaVersion = 2
     static let cacheEntryTTL: TimeInterval = 60 * 60 * 24 * 7
 
     let fileURL: URL
+    let lockURL: URL
 
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
-    private var cachedDocument: AXPathCacheDocument?
+    private let lock = NSLock()
+    private var cache: (document: AXPathCacheDocument, stamp: SharedFile.Stamp?)?
 
     init(fileURL: URL = AXPathCacheStore.defaultURL()) {
         self.fileURL = fileURL
+        self.lockURL = fileURL.deletingLastPathComponent().appendingPathComponent("ax-cache.lock")
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -93,18 +101,22 @@ final class AXPathCacheStore: @unchecked Sendable {
     }
 
     func clearAll() throws {
-        cachedDocument = emptyDocument()
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            try FileManager.default.removeItem(at: fileURL)
+        lock.lock()
+        defer { lock.unlock() }
+        try SharedFile.withLock(lockURL, exclusive: true) {
+            cache = nil
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+            }
         }
     }
 
     func clear(slots: [AXPathSlot]) throws {
-        var document = loadDocument()
-        document.entries.removeAll { slots.contains($0.slot) }
-        document.updatedAt = Date()
-        cachedDocument = document
-        try persist(document)
+        try mutate { document in
+            document.entries.removeAll { slots.contains($0.slot) }
+            document.updatedAt = Date()
+            return true
+        }
     }
 
     func export(to destinationURL: URL) throws {
@@ -129,8 +141,10 @@ final class AXPathCacheStore: @unchecked Sendable {
         }
 
         imported.updatedAt = Date()
-        cachedDocument = imported
-        try persist(imported)
+        try mutate { document in
+            document = imported
+            return true
+        }
     }
 
     func resolve(
@@ -139,13 +153,15 @@ final class AXPathCacheStore: @unchecked Sendable {
         validate: (UIElement) -> Bool,
         trace: ((String) -> Void)? = nil
     ) -> UIElement? {
-        var document = loadDocument()
+        let document = loadDocument()
         let currentFingerprint = Self.currentAppFingerprint()
         if document.appFingerprint != currentFingerprint {
             trace?("cache: fingerprint changed, invalidating entries")
-            document = emptyDocument()
-            cachedDocument = document
-            try? persist(document)
+            try? mutate { fresh in
+                guard fresh.appFingerprint != currentFingerprint else { return false }
+                fresh = emptyDocument()
+                return true
+            }
             return nil
         }
 
@@ -159,23 +175,13 @@ final class AXPathCacheStore: @unchecked Sendable {
 
         if Date().timeIntervalSince(entry.updatedAt) > Self.cacheEntryTTL {
             trace?("cache: expired slot=\(slot.rawValue), removing")
-            document.entries.removeAll {
-                $0.slot == slot && $0.rootFingerprint == rootFingerprint
-            }
-            document.updatedAt = Date()
-            cachedDocument = document
-            try? persist(document)
+            removeEntries(slot: slot, rootFingerprint: rootFingerprint)
             return nil
         }
 
         guard let candidate = AXPathResolver.resolve(path: entry.path, from: root), validate(candidate) else {
             trace?("cache: stale slot=\(slot.rawValue), removing")
-            document.entries.removeAll {
-                $0.slot == slot && $0.rootFingerprint == rootFingerprint
-            }
-            document.updatedAt = Date()
-            cachedDocument = document
-            try? persist(document)
+            removeEntries(slot: slot, rootFingerprint: rootFingerprint)
             return nil
         }
 
@@ -189,7 +195,6 @@ final class AXPathCacheStore: @unchecked Sendable {
             return
         }
 
-        var document = loadDocument()
         let rootFingerprint = AXPathResolver.rootFingerprint(of: root)
         let entry = AXPathCacheEntry(
             slot: slot,
@@ -197,56 +202,73 @@ final class AXPathCacheStore: @unchecked Sendable {
             path: path,
             updatedAt: Date()
         )
-
-        document.entries.removeAll {
-            $0.slot == slot && $0.rootFingerprint == rootFingerprint
-        }
-        document.entries.append(entry)
-        document.updatedAt = Date()
-        document.appFingerprint = Self.currentAppFingerprint()
-
-        cachedDocument = document
+        let fingerprint = Self.currentAppFingerprint()
         do {
-            try persist(document)
+            try mutate { document in
+                document.entries.removeAll {
+                    $0.slot == slot && $0.rootFingerprint == rootFingerprint
+                }
+                document.entries.append(entry)
+                document.updatedAt = Date()
+                document.appFingerprint = fingerprint
+                return true
+            }
             trace?("cache: stored slot=\(slot.rawValue)")
         } catch {
             trace?("cache: store failed slot=\(slot.rawValue) (\(error))")
         }
     }
 
-    private func loadDocument(forceReload: Bool = false) -> AXPathCacheDocument {
-        if !forceReload, let cachedDocument {
-            return cachedDocument
-        }
-
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            let document = emptyDocument()
-            cachedDocument = document
-            return document
-        }
-
-        do {
-            let data = try Data(contentsOf: fileURL)
-            let document = try decoder.decode(AXPathCacheDocument.self, from: data)
-            guard document.schemaVersion == Self.schemaVersion else {
-                let reset = emptyDocument()
-                cachedDocument = reset
-                return reset
+    private func removeEntries(slot: AXPathSlot, rootFingerprint: String) {
+        try? mutate { document in
+            let before = document.entries.count
+            document.entries.removeAll {
+                $0.slot == slot && $0.rootFingerprint == rootFingerprint
             }
-            cachedDocument = document
-            return document
-        } catch {
-            let reset = emptyDocument()
-            cachedDocument = reset
-            return reset
+            guard document.entries.count != before else { return false }
+            document.updatedAt = Date()
+            return true
         }
     }
 
-    private func persist(_ document: AXPathCacheDocument) throws {
-        let directory = fileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let data = try encoder.encode(document)
-        try data.write(to: fileURL, options: .atomic)
+    /// The document as on disk now (cached while the file is unchanged).
+    private func loadDocument(forceReload: Bool = false) -> AXPathCacheDocument {
+        lock.lock()
+        defer { lock.unlock() }
+        let stamp = SharedFile.stamp(fileURL)
+        if !forceReload, let cache, cache.stamp == stamp {
+            return cache.document
+        }
+        let loaded = SharedFile.withLock(lockURL, exclusive: false) { (readFromDisk(), SharedFile.stamp(fileURL)) }
+        cache = (loaded.0, loaded.1)
+        return loaded.0
+    }
+
+    /// Applies `change` to the document freshly read under the exclusive lock and, when it
+    /// returns true, replaces the file atomically (0600). Never writes back a stale copy.
+    private func mutate(_ change: (inout AXPathCacheDocument) -> Bool) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try SharedFile.withLock(lockURL, exclusive: true) {
+            var document = readFromDisk()
+            guard change(&document) else {
+                cache = (document, SharedFile.stamp(fileURL))
+                return
+            }
+            let data = try encoder.encode(document)
+            try SharedFile.writeAtomically(data, to: fileURL)
+            cache = (document, SharedFile.stamp(fileURL))
+        }
+    }
+
+    private func readFromDisk() -> AXPathCacheDocument {
+        guard let data = try? Data(contentsOf: fileURL),
+              let document = try? decoder.decode(AXPathCacheDocument.self, from: data),
+              document.schemaVersion == Self.schemaVersion
+        else {
+            return emptyDocument()
+        }
+        return document
     }
 
     private func emptyDocument() -> AXPathCacheDocument {

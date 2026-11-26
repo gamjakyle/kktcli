@@ -71,7 +71,7 @@ public enum RemoteElementScan {
     }
 }
 
-/// `~/.kktcli/ax-cache.json`: the main window's element id for one KakaoTalk process.
+/// `~/.kktcli/main-window-id.json`: the main window's element id for one KakaoTalk process.
 public struct AXElementCache: Codable, Equatable, Sendable {
     public static let schemaVersion = 1
 
