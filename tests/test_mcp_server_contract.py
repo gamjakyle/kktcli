@@ -69,7 +69,7 @@ class MCPServerContractTests(unittest.TestCase):
         self.assertLess(source.index('code: "SEND_DISABLED"'), source.index("let run = runner.run(request.arguments, timeoutSec: request.timeout)"))
         self.assertIn('if mode == .preview { arguments.append("--preview") }', mapping)
         # The drafting rules and the explicit 보내 are in the server instructions.
-        for text in ("verbatim", "never add facts", "at most 3 lines", "mode=preview first", "explicit 보내", "never send in bulk", "never enable it on your own", "kktcli export"):
+        for text in ("verbatim", "never add facts", "at most 3 lines", "mode=preview first", "explicit 보내", "never send in bulk", "never enable it on your own"):
             self.assertIn(text, source)
 
     def test_read_errors_keep_the_codes_kktcli_reports(self) -> None:

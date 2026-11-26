@@ -32,6 +32,11 @@ struct ReadCommand: ParsableCommand {
             see unread messages without marking them read. --allow-unread is deprecated and has
             no effect.
 
+            --all-history reads everything KakaoTalk has locally: it scrolls up until the top of
+            the local history or until no more rows load (120 s budget), with no --limit, and
+            meta.history says where it stopped. Older messages sit behind KakaoTalk's
+            '지난 대화 보기', which needs your own authentication; kktcli never presses it.
+
             When fewer than --limit messages are loaded, older messages are loaded by scrolling
             the transcript to the top, bounded by --scrollback-timeout (on by default, off with
             --no-scrollback, and opt-in with --scrollback under --background-safe).
@@ -69,8 +74,8 @@ struct ReadCommand: ParsableCommand {
     @Argument(help: "Name of the chat to read from (partial match supported)")
     var chat: String?
 
-    @Option(name: .shortAndLong, help: "Maximum number of messages to show")
-    var limit: Int = 20
+    @Option(name: .shortAndLong, help: "Maximum number of messages to show (default 20; no limit with --all-history)")
+    var limit: Int?
 
     @Flag(name: .long, help: "Show raw element info for debugging")
     var debug: Bool = false
@@ -123,8 +128,25 @@ struct ReadCommand: ParsableCommand {
     @Flag(name: .long, help: "Never scroll the transcript to load older messages")
     var noScrollback: Bool = false
 
-    @Option(name: .long, help: "Time budget in seconds for loading older messages (automatic scrollback also stops ~6.5 s after start)")
-    var scrollbackTimeout: Double = 4
+    @Option(name: .long, help: "Time budget in seconds for loading older messages (default 4, 120 with --all-history; automatic scrollback also stops ~6.5 s after start)")
+    var scrollbackTimeout: Double?
+
+    @Flag(
+        name: .long,
+        help: "Read everything KakaoTalk has locally: scroll up to the top of the local history or until no more rows load (budget 120 s, see --scrollback-timeout), no --limit"
+    )
+    var allHistory: Bool = false
+
+    static let allHistoryScrollbackTimeout: Double = 120
+
+    /// --limit, or 20; with --all-history unlimited (the maximum).
+    var effectiveLimit: Int {
+        limit ?? (allHistory ? Self.maximumLimit : 20)
+    }
+
+    var effectiveScrollbackTimeout: Double {
+        scrollbackTimeout ?? (allHistory ? Self.allHistoryScrollbackTimeout : 4)
+    }
 
     static let maximumLimit = 50_000
     static let maximumScrollbackTimeout: Double = 600
@@ -294,7 +316,7 @@ struct ReadCommand: ParsableCommand {
 
     private var scrollbackEnabled: Bool {
         if noScrollback { return false }
-        return scrollback || !backgroundSafe
+        return scrollback || allHistory || !backgroundSafe
     }
 
     /// Non-empty `--chat-id` values.
@@ -320,7 +342,7 @@ struct ReadCommand: ParsableCommand {
         } else if (chat ?? "").isEmpty {
             return "Chat name is required unless --chat-id or --chat-ids-file is provided."
         }
-        if limit < 1 || limit > Self.maximumLimit {
+        if effectiveLimit < 1 || effectiveLimit > Self.maximumLimit {
             return "--limit must be between 1 and \(Self.maximumLimit)."
         }
         if scrollback && noScrollback {
@@ -335,7 +357,10 @@ struct ReadCommand: ParsableCommand {
         if waitForIdle < 0 || waitForIdle > UserActivityPolicy.maximumSeconds {
             return "--wait-for-idle must be between 0 and \(Int(UserActivityPolicy.maximumSeconds))."
         }
-        if scrollbackTimeout < 0 || scrollbackTimeout > Self.maximumScrollbackTimeout {
+        if allHistory && noScrollback {
+            return "--all-history and --no-scrollback cannot be used together."
+        }
+        if effectiveScrollbackTimeout < 0 || effectiveScrollbackTimeout > Self.maximumScrollbackTimeout {
             return "--scrollback-timeout must be between 0 and \(Int(Self.maximumScrollbackTimeout)) seconds."
         }
         return nil
@@ -463,17 +488,18 @@ struct ReadCommand: ParsableCommand {
             ? StructuredTranscriptReader.waitForParts(in: opened.window, timeout: 1.5)
             : StructuredTranscriptReader.parts(in: opened.window)
         if let parts {
-            var budget = scrollbackTimeout
-            if !scrollback {
+            var budget = effectiveScrollbackTimeout
+            if !scrollback && !allHistory {
                 budget = min(budget, max(0, Self.automaticWorkBudget - Date().timeIntervalSince(budgetAnchor())))
             }
             result = StructuredTranscriptReader(runner: runner).read(
                 parts,
                 options: TranscriptReadOptions(
-                    limit: limit,
+                    limit: effectiveLimit,
                     includeSystem: includeSystem,
                     scrollback: scrollbackEnabled,
-                    scrollbackTimeout: budget
+                    scrollbackTimeout: budget,
+                    allHistory: allHistory
                 ),
                 fullText: fullText ? FullTextFetcher(kakao: kakao, runner: runner, activity: session.activity) : nil
             )
@@ -930,6 +956,7 @@ struct ReadCommand: ParsableCommand {
         let fullText: FullTextFetcher.Report?
         let waitedForUserMs: Int
         let store: StoreReport?
+        let history: HistoryStatus
 
         enum CodingKeys: String, CodingKey {
             case openedVia = "opened_via"
@@ -951,6 +978,7 @@ struct ReadCommand: ParsableCommand {
             case fullText = "full_text"
             case waitedForUserMs = "waited_for_user_ms"
             case store
+            case history
         }
 
         func encode(to encoder: Encoder) throws {
@@ -974,6 +1002,7 @@ struct ReadCommand: ParsableCommand {
             try container.encode(fullText, forKey: .fullText)
             try container.encode(waitedForUserMs, forKey: .waitedForUserMs)
             try container.encode(store, forKey: .store)
+            try container.encode(history, forKey: .history)
         }
     }
 
@@ -1056,7 +1085,16 @@ struct ReadCommand: ParsableCommand {
                     truncatedMessages: items.filter(\.truncated).count,
                     fullText: outcome.result.fullText,
                     waitedForUserMs: outcome.waitedForUserMs,
-                    store: outcome.store
+                    store: outcome.store,
+                    history: HistoryStatus.evaluate(
+                        reachedTop: outcome.result.reachedHistoryTop,
+                        scrollbackAttempted: outcome.result.scrollback?.attempted ?? false,
+                        stalled: outcome.result.scrollback?.stalled ?? false,
+                        timedOut: outcome.result.scrollback?.timedOut ?? false,
+                        returned: items.count,
+                        limit: effectiveLimit,
+                        dates: items.map(\.date)
+                    )
                 )
             )
     }

@@ -37,3 +37,18 @@ class ReadBatchContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReadAllHistoryContractTests(unittest.TestCase):
+    def test_all_history_scrolls_to_the_top_then_reads_once(self) -> None:
+        read = READ_COMMAND.read_text(encoding="utf-8")
+        self.assertIn("var allHistory: Bool = false", read)
+        self.assertIn("static let allHistoryScrollbackTimeout: Double = 120", read)
+        self.assertIn("limit ?? (allHistory ? Self.maximumLimit : 20)", read)
+        self.assertIn("history: HistoryStatus.evaluate(", read)
+        self.assertIn("지난 대화 보기", read)
+        reader = (REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "StructuredTranscriptReader.swift").read_text(encoding="utf-8")
+        body = reader[reader.index("if options.allHistory {"):reader.index("while !options.allHistory,")]
+        self.assertEqual(body.count("readTail(parts, options: options)"), 1)
+        self.assertIn("historyTopLoaded(parts.table)", body)
+        self.assertNotIn("perform(", reader[reader.index("private func historyTopLoaded("):])

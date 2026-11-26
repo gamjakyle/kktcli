@@ -15,6 +15,9 @@ struct TranscriptReadOptions {
     var includeSystem: Bool
     var scrollback: Bool
     var scrollbackTimeout: TimeInterval
+    /// `read --all-history`: scroll up to the top of the local history (or a stall), counting
+    /// rows only, then read every row once.
+    var allHistory: Bool = false
 }
 
 struct ScrollbackReport: Encodable {
@@ -53,6 +56,8 @@ struct StructuredTranscriptResult {
     let usedEarlierDateSeparator: Bool
     /// SIGINT/SIGTERM arrived; reading stopped early with what was already read.
     let interrupted: Bool
+    /// The top of the local history (지난 대화 보기 / authentication notice) is among the rows read.
+    var reachedHistoryTop: Bool = false
     /// `--full-text` only.
     let fullText: FullTextFetcher.Report?
 }
@@ -159,7 +164,35 @@ struct StructuredTranscriptReader {
                 if let original = AXNodeReader.doubleValue(scrollBar) {
                     scrollBarToRestore = (scrollBar, original)
                 }
-                while tail.selected.count < options.limit, !ReadInterruption.requested {
+                if options.allHistory {
+                    // Up to the top first, counting rows only (re-reading every row after each
+                    // step would cost time quadratic in the history); then one full read.
+                    while !ReadInterruption.requested {
+                        if historyTopLoaded(parts.table) {
+                            scrollReport.reachedHistoryTop = true
+                            break
+                        }
+                        if Date() >= deadline {
+                            scrollReport.timedOut = true
+                            break
+                        }
+                        let current = AXNodeReader.rowCount(of: parts.table)
+                        let step = loadOlderRows(table: parts.table, scrollBar: scrollBar, targetRowCount: current + 200, deadline: deadline)
+                        runner.log("read: all-history rows \(step.rowsBefore) -> \(step.rowsAfter)")
+                        scrollReport.rowsAfter = step.rowsAfter
+                        if step.stalled {
+                            scrollReport.reachedHistoryTop = historyTopLoaded(parts.table)
+                            scrollReport.stalled = !scrollReport.reachedHistoryTop
+                            break
+                        }
+                        if step.timedOut {
+                            scrollReport.timedOut = true
+                            break
+                        }
+                    }
+                    tail = readTail(parts, options: options)
+                }
+                while !options.allHistory, tail.selected.count < options.limit, !ReadInterruption.requested {
                     if Date() >= deadline {
                         scrollReport.timedOut = true
                         break
@@ -231,6 +264,8 @@ struct StructuredTranscriptReader {
             scrollback: report,
             usedEarlierDateSeparator: usedEarlierSeparator,
             interrupted: ReadInterruption.requested,
+            reachedHistoryTop: (report?.reachedHistoryTop ?? false)
+                || (tail.start == 0 && TranscriptSelection.reachedHistoryTop(tail.items)),
             fullText: fullTextReport
         )
     }
@@ -339,6 +374,14 @@ struct StructuredTranscriptReader {
 
         runner.log("read: transcript rows total=\(rowElements.count) read=\(rows.count) items=\(items.count) selected=\(selected.count)")
         return TailRead(rowElements: rowElements, totalRows: rowElements.count, start: start, rows: rows, items: items, selected: selected)
+    }
+
+    /// The first rows show 지난 대화 보기 or the history authentication notice.
+    private func historyTopLoaded(_ table: AXUIElement) -> Bool {
+        let rows = AXNodeReader.rows(of: table).prefix(3).map {
+            TranscriptRow(nodes: AXNodeReader.flatten($0, maxDepth: Self.rowFlattenDepth, budget: Self.rowFlattenBudget))
+        }
+        return TranscriptSelection.reachedHistoryTop(TranscriptParser.parse(Array(rows)))
     }
 
     /// Walks rows above `end` (cheap reads) for the nearest date separator.
