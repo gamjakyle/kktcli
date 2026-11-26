@@ -76,6 +76,24 @@ class AgentSkillContractTests(unittest.TestCase):
         self.assertIn("CHAT_ID_STALE", skill)
         self.assertIn("CHAT_AMBIGUOUS", skill)
 
+    def test_sending_is_off_and_the_agent_never_turns_it_on(self) -> None:
+        skill = SKILL_PATH.read_text(encoding="utf-8")
+        self.assertIn("Sending is off by default", skill)
+        self.assertIn("Never run\n  `kktcli config set send on` on your own", skill)
+        self.assertIn("SEND_DISABLED", skill)
+        self.assertIn("there is no further confirmation", skill)
+        for gone in ("SEND_CANCELLED", "on-screen confirmation", "mouse click"):
+            self.assertNotIn(gone, skill)
+
+    def test_history_and_chat_list_are_explained(self) -> None:
+        skill = SKILL_PATH.read_text(encoding="utf-8")
+        self.assertIn("--all-history", skill)
+        self.assertIn("meta.history", skill)
+        self.assertIn("지난 대화 보기", skill)
+        self.assertIn("kktcli never presses it", skill)
+        self.assertIn("CHAT_LIST_UNAVAILABLE", skill)
+        self.assertIn("switched_to_chat_tab", skill)
+
     def test_eval_set_covers_read_unread_text_send_and_image_intents(self) -> None:
         payload = json.loads(EVALS_PATH.read_text(encoding="utf-8"))
 

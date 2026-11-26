@@ -38,11 +38,11 @@ Please read this first.
 - **Never mass-send.** `send` and `send-image` remain for single messages the user
   explicitly asked for. Repeated sending to many rooms or people looks like spam and
   can get the account restricted.
-- **Nothing is sent unseen.** `send --preview` sends nothing and shows the target room
-  (name, kind, members, chat_id), its last messages, a same-name warning and the exact
-  text. A real send shows a confirmation dialog on screen and sends only when you click
-  보내기 with the mouse (취소 is the default; it cancels itself after 120 s). No option skips
-  it, so an AI or a script cannot send something you have not seen.
+- **Sending is off by default.** Until `kktcli config set send on`, `send` and
+  `send-image` send nothing and stop with `SEND_DISABLED` (exit status 9), and the MCP server
+  does not offer its send tools. `send --preview` works even while sending is off: it shows
+  the target room (name, kind, members, chat_id), its last messages, a same-name warning and
+  the exact text, and sends nothing. Once enabled, still preview first.
 - **Unread rooms are opened, and opening marks them read.** `read` opens a room with
   unread messages just as a person opening it by hand would, so the other participants
   get read receipts. To avoid that, pass `--skip-unread`: a room whose chat-list row
@@ -80,6 +80,8 @@ Please read this first.
 | Opening a room | Row select + Enter, typing into search, double-click (key and mouse events) | Presses only the row's context-menu item **채팅방 열기** through Accessibility; no keystrokes, works with KakaoTalk in the background |
 | Unread rooms | Opened, which sends read receipts | Opened like by hand, which sends read receipts; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`); JSON reports the badge before and after (`unread_before`, `unread_after`, `marked_read`) |
 | `read --chat-id` | Rescans about 200 chat-list rows on every call | Starts at the registry's last known row and stops at the first match |
+| Checking the chat list | Reads whatever table the main window shows as the chat list | Verifies the rows look like chat rows (title plus time or preview); on another tab (e.g. 친구) switches with KakaoTalk's own 창 > 채팅 (⌘2) menu item; otherwise reads and records nothing |
+| A room's whole history | None | `read --all-history`: up to the top of what KakaoTalk keeps locally (or until no more rows load); `meta.history` says where it stopped |
 | chat_id of same-name rooms | Pairs them by list position when they cannot be told apart, so an ID can move to another room | Keeps an ID only on an exact preview match or one-to-one elimination; otherwise retires the old ID (`CHAT_ID_STALE`) and issues new ones; `CHAT_AMBIGUOUS` lists the candidates |
 | Keeping, searching and exporting what was read | None | Read messages are kept on this Mac (`~/.kktcli/messages`); `search`; `export` to Markdown, JSON or CSV; a one-page digest template |
 | Watching many rooms | One room, opened by search and Enter | `watch --all`: watches the top N chat-list rows without clicking or scrolling and prints one JSON line per change; `--read` reads the changed rooms |
@@ -93,7 +95,7 @@ Please read this first.
 | List state recovery | None | Restores a search-filtered chat list and a closed main window by pressing only specific buttons / menu items |
 | Team and open chats | Could fail in the search fallback | Matches row titles `팀채팅, <name>` / `오픈채팅, <name>` with window title `<name>`; recognises an untitled open-chat window when it shows a chat; a row that opens the list of 1:1 open-chat conversations is closed and reported as `OPEN_CHAT_LIST` (those conversations cannot be read) |
 | Distribution | `update` command, Homebrew, release automation | `install.sh` (release tarball checked against its SHA-256, or a source build); no network code in the program; separate data directories |
-| MCP | `kmsg_*` tools | `kktcli_*` tools, `skip_unread` and scrollback options, read error codes passed through, send tools preview by default (`mode=preview`) |
+| MCP | `kmsg_*` tools | `kktcli_*` tools, `skip_unread` and scrollback options, read error codes passed through, send tools listed only while sending is on and previewing by default (`mode=preview`) |
 
 ## Measured results
 
@@ -227,7 +229,8 @@ your edited copy to use it.
 
 [`skills/kktcli`](skills/kktcli/SKILL.md) tells coding agents how to use kktcli safely
 (read first, say that opening an unread room marks it read, summarise with the template,
-send only after showing a preview and the user's explicit 보내, once). For Claude Code, copy the folder to `~/.claude/skills/kktcli`
+turn sending on only when the user asks, send only after showing a preview and the user's
+explicit 보내, once). For Claude Code, copy the folder to `~/.claude/skills/kktcli`
 and invoke it with `/kktcli`. For other agents, follow their skill installation
 instructions.
 
@@ -237,7 +240,8 @@ instructions.
 kktcli mcp-server
 ```
 
-A stdio MCP server with the tools `kktcli_read`, `kktcli_send` and `kktcli_send_image`.
+A stdio MCP server with the tool `kktcli_read`, plus `kktcli_send` and `kktcli_send_image`
+only while sending is on (`kktcli config set send on`).
 `kktcli_read` accepts `skip_unread`, `scrollback` and `scrollback_timeout`, and on
 failure returns kktcli's own error code such as `UNREAD_REFUSED`. The old `allow_unread`
 option is still accepted and ignored. See

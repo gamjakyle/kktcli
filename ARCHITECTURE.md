@@ -22,20 +22,20 @@ CLI commands (Sources/kktcli/Commands)
 
 | Path | Responsibility |
 |---|---|
-| `Sources/kktcli/kktcli.swift` | Registers commands, prints `0.1.0 (based on kmsg 1.260921.0)`, turns argument errors of `read --json` into JSON. |
+| `Sources/kktcli/kktcli.swift` | Registers commands, prints the `VERSION` (e.g. `0.2.0 (based on kmsg 1.260921.0)`), turns argument errors of `read --json` into JSON. |
 | `Sources/kktcli/Commands/` | Argument parsing, permission and login checks, human or JSON output. |
 | `AXNodeReader` | One `AXUIElementCopyMultipleAttributeValues` call per element; depth-first flatten with node budgets; marks failed reads. |
-| `ChatListLocator` | Finds open chat windows, the main window ("Main Window") and its chat-list table; reads row titles from `_NS:40`; resolves `--chat-id` from the registry hint with early termination; reopens a closed main window via the **카카오톡 열기** menu item. |
+| `ChatListLocator` | Finds open chat windows, the main window ("Main Window") and its chat-list table; reads row titles from `_NS:40`; verifies the table is the chat list (`ChatListCheck`) and otherwise switches tabs with the **창 > 채팅** (⌘2) menu item; resolves `--chat-id` from the registry hint with early termination; reopens a closed main window via the **카카오톡 열기** menu item. |
 | `ChatRoomMenuOpener` | Scrolls the list with the scroll-bar value, shows the row's context menu (AXShowMenu) and presses only **채팅방 열기** (`openChatRoom:`) after re-checking the title (and, with `--skip-unread`, the unread badge); cancels anything else. Returns the badge seen right before the press. Accepts a window titled for the row, or the single new window even when untitled (open chats) if it shows a transcript or message input; if none is accepted, closes every window that appeared after the press. |
 | `ChatListRecoverer` | Restores a search-filtered chat list by pressing only **취소** inside the search field and the top-bar **검색** toggle. |
 | `StructuredTranscriptReader` | Locates the transcript (`_NS:32` scroll area), reads rows newest-first until the limit and its context are covered, loads older rows by setting the scroll bar to 0 and polling the row count, probes for an earlier date separator. |
 | `UserActivityGuard` | Before each press that opens or brings up a KakaoTalk window: waits while KakaoTalk may be frontmost and the HID idle time is below `--idle-seconds` (always for 카카오톡 열기), re-checks right before the press, gives up with `KAKAOTALK_IN_USE`. Decision in `KktcliCore/UserActivityPolicy`. |
 | `MainWindowAccess` | Reopens a main window that Accessibility does not show only when KakaoTalk is frontmost or `--allow-activate` (`MainWindowPolicy`); otherwise `MAIN_WINDOW_NOT_VISIBLE` with Accessibility and window-server counts. |
 | `KakaoTalkInputGuard` | Checks, immediately before every posted key press or click, that KakaoTalk is frontmost (and owns the click point). |
-| `ChatWindowResolver`, `MessageContextResolver`, `KakaoTalkTranscriptReader` | Older search/keyboard based paths used by `send`, `send-image`, `watch` and `read --legacy-open`. |
+| `ChatWindowResolver`, `MessageContextResolver`, `KakaoTalkTranscriptReader` | Older search/keyboard based paths kept for `read --legacy-open`, `chats` refreshes and the cache command; `send`, `send-image` and `watch` open rooms like `read`. |
 | `ChatIdentityRegistryStore` | Local synthetic `chat_id` values derived from normalized names, with last seen row and preview. |
 | `CredentialStore`, `KakaoTalkAuthenticator` | Encrypted local credentials, login and lock-screen handling. |
-| `KktcliCore` | `ChatRowAnalyzer` (titles, unread badges), `TranscriptParser` (dates, sides, authors, burst times), `ChatQueryMatcher`, `RoomTitle`, `ListRecovery`, `SafetyPolicies` (frontmost policy, menu-item allowlist, the send button), `ChatIdentityAssignment` (chat_ids), `MessageStore` and `ExportFormatter` (local store, search, export), `WatchDiff`, `SendModel` (send preview and checks), `MCPMapping`, JSON output types. |
+| `KktcliCore` | `ChatRowAnalyzer` (titles, unread badges), `TranscriptParser` (dates, sides, authors, burst times), `ChatQueryMatcher`, `RoomTitle`, `ListRecovery`, `SafetyPolicies` (frontmost policy, menu-item allowlist, the send button), `ChatIdentityAssignment` (chat_ids), `MessageStore` and `ExportFormatter` (local store, search, export), `WatchDiff`, `SendModel` (send preview and checks), `ChatListCheck` (is this table the chat list), `HistoryStatus` (`meta.history`), `KktcliConfig` (the `send` setting), `MCPMapping`, JSON output types. |
 | `MCPServerCommand` | stdio MCP server; runs the same binary as a subprocess per tool call. |
 | `VersionGenPlugin` / `VersionGenTool` | Validate `VERSION` (`MAJOR.MINOR.PATCH`) and generate `BuildVersion` at build time. |
 
@@ -78,8 +78,29 @@ frontmost check, one press at a time.
 
 Every element kktcli presses is identified by role, identifier and title or description
 (`openChatRoom:` / 채팅방 열기, 취소 inside the search field, the top-bar 검색 toggle,
-`showFirstWindow:` / 카카오톡 열기, a window's close button) and re-verified right before
-the press. Context menus are cancelled rather than guessed at.
+`showFirstWindow:` / 카카오톡 열기, the 창 menu item 채팅 with command key 2, a room's own 전송
+button, a window's close button) and re-verified right before the press. Context menus are
+cancelled rather than guessed at.
+
+### The chat list is verified before it is used
+
+The main window shows one table for whichever tab is selected, and the 친구 tab's rows also
+carry an `_NS:40` title. Reading it as the chat list once filled the chat_id registry with
+friends. So the first rows are checked to look like chat-list rows (title plus a time or a
+preview, `ChatListCheck`) before `chats`, `read`, `send`, `watch --all` or any registry write
+uses the table. On another tab kktcli presses the 창 menu item 채팅 (⌘2) once, through the
+activity guard, and waits up to 2 s for a verified list; it never presses 친구 or 더보기, and
+list recovery never presses anything on an unverified table. `watch --all` never presses at
+all and reports `not_chat_tab`.
+
+### Sending is off until the user turns it on
+
+`send` and `send-image` refuse (`SEND_DISABLED`) unless `kktcli config set send on`, and the
+MCP server lists its send tools only then. There is no confirmation dialog: the preview and
+the user's explicit 보내 are the check. A real send keeps the narrow path: a chat_id or a
+unique name, a re-check right before the press that the same window still shows the same
+room and the input holds exactly the text, the room's own 전송 button, and a verified new
+bubble.
 
 ### Never take the user's keyboard or desktop
 

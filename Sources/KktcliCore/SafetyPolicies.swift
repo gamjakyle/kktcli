@@ -65,8 +65,8 @@ public enum FrontmostPolicy {
 }
 
 /// The chat window's own "전송" (send) button, next to "전송 메뉴". It is the only press
-/// exempt from the "전송" denylist below, and `send` presses it once, after the user
-/// confirmed the exact text in the confirmation dialog and the input was verified.
+/// exempt from the "전송" denylist below, and `send` presses it once, after it re-checked
+/// that the window still shows the same room and the input holds exactly the text.
 public enum SendButtonSafety {
     public static let title = "전송"
 

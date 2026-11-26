@@ -80,6 +80,33 @@ class ProjectDocumentationTests(unittest.TestCase):
             self.assertIn(text, usage)
         self.assertNotIn("unread_badge", usage)
 
+    def test_docs_say_sending_is_off_and_there_is_no_dialog(self) -> None:
+        for path, needle in ((README_KO, "보내기는 기본으로 꺼져 있습니다"), (README_EN, "Sending is off by default"), (USAGE, "Sending is off by default")):
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(needle, text)
+                self.assertIn("kktcli config set send on", text)
+                self.assertIn("SEND_DISABLED", text)
+                for gone in ("SEND_CANCELLED", "확인 창", "confirmation dialog", "CONFIRMATION_REQUIRED"):
+                    self.assertNotIn(gone, text)
+        usage = USAGE.read_text(encoding="utf-8")
+        for text in ("### `config`", "| `SEND_DISABLED` | 9 |", "~/.config/kktcli/config.json"):
+            self.assertIn(text, usage)
+
+    def test_usage_documents_the_chat_list_check_and_history(self) -> None:
+        usage = USAGE.read_text(encoding="utf-8")
+        for text in (
+            "**The chat list is checked first.**",
+            "`switched_to_chat_tab`",
+            "never 친구 or 더보기",
+            "`not_chat_tab`",
+            "| `--all-history` |",
+            '"history": {',
+            "지난 대화 보기",
+            "kktcli never presses it",
+        ):
+            self.assertIn(text, usage)
+
     def test_docs_mention_kmsg_only_as_credit_or_comparison(self) -> None:
         usage = USAGE.read_text(encoding="utf-8")
         # USAGE mentions kmsg only for the version credit and the data it never touches.

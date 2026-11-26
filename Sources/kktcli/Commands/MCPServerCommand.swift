@@ -609,7 +609,7 @@ private final class KktcliMCPServer {
                         "type": "string",
                         "enum": ["preview", "send"],
                         "default": "preview",
-                        "description": "preview (default) sends nothing; send opens the confirmation dialog and waits for the user",
+                        "description": "preview (default) sends nothing; send sends right away (no dialog), only after the user saw the preview and said 보내",
                     ],
                     "keep_window": ["type": "boolean", "default": false, "description": "Keep the chat window kktcli opened"],
                     "idle_seconds": ["type": "number", "minimum": 0, "maximum": UserActivityPolicy.maximumSeconds, "description": "While KakaoTalk is in front, press nothing until input was idle this long (default 10)"],

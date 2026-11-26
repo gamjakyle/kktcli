@@ -31,6 +31,10 @@ Claude Code users can invoke this skill with `/kktcli`.
   that in a loop.
 - `send` and `send-image` change external state. Run them only when the user explicitly
   asked or authorized sending that exact content to that exact chat.
+- **Sending is off by default** and stays off unless the user turns it on. Never run
+  `kktcli config set send on` on your own; while sending is off, `send` / `send-image`
+  stop with `SEND_DISABLED` (exit status 9): tell the user, and only if they ask, run it
+  for them.
 - A request to draft, rewrite, preview or prepare a message is not permission to send.
 - **Never send in bulk** (many rooms, many people, repeated messages).
 - If the intended chat is ambiguous, stop and ask the user to choose. Never guess from a
@@ -67,7 +71,13 @@ match, show the minimal identifying choices and wait for the user to select one.
 kktcli read --chat-id "<chat_id>" --limit 20 --json
 ```
 
-Adjust `--limit` to the request; add `--scrollback` when older messages are needed.
+Adjust `--limit` to the request; add `--scrollback` when older messages are needed, or
+`--all-history` when the user wants everything KakaoTalk has for the room (scrolls up for up
+to 120 s; `--scrollback-timeout` changes that). `meta.history` says whether it reached the
+top (`complete`, `stopped`: `top`, `stalled`, `timeout`, `limit` or `not_attempted`, and
+`earliest_date`). Messages older than KakaoTalk's local history need the user's own
+authentication through KakaoTalk's "지난 대화 보기"; kktcli never presses it. If the user
+needs them, ask them to do that in KakaoTalk themselves, then read again.
 Summarize by default and include raw content only when asked. A message with
 `"truncated": true` shows only its first 500 characters; say so, and add `--full-text`
 (experimental; it presses that message's 전체보기 and closes what opens) only when the
@@ -88,6 +98,10 @@ field; on failure use `error.code`:
 - `MAIN_WINDOW_NOT_VISIBLE`: KakaoTalk's main window is closed, minimised, or on another
   desktop or full-screen Space. Ask the user to show KakaoTalk; use `--allow-activate`
   only if they agree to KakaoTalk coming to the front.
+- `CHAT_LIST_UNAVAILABLE`: the main window shows another tab (for example 친구) and
+  switching to the chat list did not work; nothing was read or recorded. Ask the user to
+  show KakaoTalk's chat list. A successful switch shows `meta.main_window:
+  "switched_to_chat_tab"`.
 - `KAKAOTALK_IN_USE` (exit status 75): the user is using KakaoTalk. Tell them and retry
   later, not right away.
 - `OPEN_CHAT_LIST`: the row is a 1:1 open chat that opens a list of conversations, which
@@ -148,13 +162,13 @@ member count), the last messages, any same-name warning and the exact text. Then
   kktcli send --chat-id "<chat_id>" "<message>" --json
   ```
 
-  kktcli then shows its own confirmation on the user's screen; only the user's mouse click
-  sends. Report `sent`, `cancelled` and `bubble_verified` from the JSON.
+  This sends right away; there is no further confirmation, so the preview and the user's
+  보내 are the only check. Report `sent` and `bubble_verified` from the JSON.
 - A request to draft, rewrite or preview is not a request to send: report the preview and
   stop. If the recipient or text changes, preview again.
-- `SEND_CANCELLED` (exit 7) means nothing was sent. Any other send failure (exit 8) may
-  have left the outcome uncertain: read the room before anything else and never send the
-  same text twice.
+- `SEND_DISABLED` (exit 9) means sending is off and nothing was touched; do not turn it on
+  yourself. Any other send failure (exit 8) may have left the outcome uncertain: read the
+  room before anything else and never send the same text twice.
 
 Pass the message as one argument (argument-array form when available); never build an
 interpolated shell command from message text.
@@ -165,8 +179,9 @@ interpolated shell command from message text.
 kktcli send-image --chat-id "<chat_id>" "/absolute/path/to/image.png" --preview --json
 ```
 
-Same rules: preview first, the user's explicit 보내, then the real `send-image` (without
-`--preview`), which shows the same on-screen confirmation with the file name and size.
+Same rules: sending must be on, preview first (it shows the file name and size), the
+user's explicit 보내, then the real `send-image` (without `--preview`), which sends right
+away.
 
 ## 7. Diagnose without widening the action
 

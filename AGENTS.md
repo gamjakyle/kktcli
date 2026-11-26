@@ -37,7 +37,7 @@ use `send` or `send-image` in tests.
 ```
 Sources/kktcli/Commands       CLI commands (ArgumentParser)
 Sources/kktcli/KakaoTalk      chat list, opener, transcript reader, recovery, legacy resolver
-Sources/kktcli/Send           room session, send preview, confirmation, verified send
+Sources/kktcli/Send           room session, send preview, verified send
 Sources/kktcli/Store          local message store (~/.kktcli/messages)
 Sources/kktcli/Accessibility  AX wrappers, batched reads, input guard, permission
 Sources/KktcliCore            pure parsing / policy logic (unit tested)
@@ -92,6 +92,13 @@ Chat window (title = room name; team, self and open chats drop the "팀채팅, "
   never when the main window is not visible and KakaoTalk is not in front, unless
   `--allow-activate` (`MAIN_WINDOW_NOT_VISIBLE`). A full-screen Space elsewhere makes
   Accessibility report zero KakaoTalk windows.
+- Before anything uses the main window's table (chats, read, send, watch --all, any
+  registry write), verify it is the chat list (`ChatListCheck`). To switch tabs press only
+  the 창 menu item titled 채팅 with command key 2 (`ChatTabMenu`), through the activity
+  guard; never press 친구 or 더보기, and never run list recovery on an unverified table.
+- Sending is off unless `kktcli config set send on` (`~/.config/kktcli/config.json`); never
+  turn it on from code, tests or skills. There is no confirmation dialog: the preview and the
+  user's explicit 보내 are the check.
 - `read` opens rooms with unread messages, which sends read receipts like opening them
   by hand; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`, exit status 3) and
   `--allow-unread` is a deprecated no-op. Keep `meta.unread_before`, `unread_after` and
