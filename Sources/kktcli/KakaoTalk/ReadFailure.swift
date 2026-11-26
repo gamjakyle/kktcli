@@ -1,13 +1,14 @@
 import Darwin
 import Foundation
+import KktcliCore
 
 /// A `read` failure with a stable machine-readable code. `kktcli read --json` prints it as
 /// `{"ok": false, "error": {...}}` and exits with `exitCode`.
 struct ReadFailure: Error, CustomStringConvertible {
     /// Exit status for refusals (unread room, unverifiable unread state).
-    static let refusedExitCode: Int32 = 3
+    static let refusedExitCode: Int32 = KktcliExitStatus.refused
     /// Ctrl-C / SIGTERM (128 + SIGINT).
-    static let interruptedExitCode: Int32 = 130
+    static let interruptedExitCode: Int32 = KktcliExitStatus.interrupted
 
     var code: String
     var message: String

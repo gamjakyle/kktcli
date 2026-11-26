@@ -41,7 +41,7 @@ struct ChatRoomMenuOpener {
     private static let popupMenuWindowLayer = 101
 
     /// Exit status for a row that opens something that is not a chat (OPEN_CHAT_LIST).
-    static let notAChatExitCode: Int32 = 4
+    static let notAChatExitCode: Int32 = KktcliExitStatus.notAChat
 
     let kakao: KakaoTalkApp
     let runner: AXActionRunner

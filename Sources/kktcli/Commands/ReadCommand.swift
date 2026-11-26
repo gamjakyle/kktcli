@@ -503,6 +503,9 @@ struct ReadCommand: ParsableCommand {
                     hint: "Run 'kktcli chats' first to refresh the local registry."
                 )
             }
+            if record.isRetired {
+                throw ChatListLocator.staleChatID(chatID, record: record)
+            }
             return .chatID(chatID, record)
         }
     }

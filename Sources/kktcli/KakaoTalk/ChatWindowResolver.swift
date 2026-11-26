@@ -152,6 +152,9 @@ struct ChatWindowResolver {
         guard let record = ChatIdentityRegistryStore.shared.record(for: chatID) else {
             throw KakaoTalkError.elementNotFound("Unknown chat_id '\(chatID)'. Run 'kktcli chats' first to refresh the local registry.")
         }
+        if record.isRetired {
+            throw ChatListLocator.staleChatID(chatID, record: record)
+        }
 
         if interactionMode == .backgroundSafe {
             return try resolveExistingWindowOnly(query: record.displayName)

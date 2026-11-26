@@ -54,7 +54,7 @@ public enum UserActivityPolicy {
     public static let maximumSeconds: Double = 600
     public static let pollInterval: Double = 0.5
     /// Exit status for KAKAOTALK_IN_USE (EX_TEMPFAIL: try again later).
-    public static let inUseExitCode: Int32 = 75
+    public static let inUseExitCode: Int32 = KktcliExitStatus.inUse
 
     public static func mayPress(_ press: UserActivityPress, state: UserActivityState, idleSeconds: Double) -> Bool {
         let idle = state.secondsSinceLastInput >= idleSeconds

@@ -1,5 +1,5 @@
-import CryptoKit
 import Foundation
+import KktcliCore
 
 struct ChatIdentityRecord: Codable {
     var chatID: String
@@ -9,6 +9,14 @@ struct ChatIdentityRecord: Codable {
     var firstSeenAt: Date
     var lastSeenAt: Date
     var lastSeenIndex: Int?
+    /// Set when a scan could not tell this room apart from another one with the same name.
+    /// A retired ID never points at a room again (`CHAT_ID_STALE`). Absent in schema 1.
+    var retired: Bool?
+    var retiredAt: Date?
+
+    var isRetired: Bool {
+        retired ?? false
+    }
 }
 
 private struct ChatIdentityRegistryDocument: Codable {
@@ -17,9 +25,14 @@ private struct ChatIdentityRegistryDocument: Codable {
     var updatedAt: Date
 }
 
+/// `~/.kktcli/chat-registry.json`: synthetic chat_ids (see `ChatIdentityAssignment`).
+///
+/// Schema 2 adds `retired`; schema 1 files are read as they are (every ID kept, none
+/// retired) and written back as schema 2 on the next change.
 final class ChatIdentityRegistryStore: @unchecked Sendable {
     static let shared = ChatIdentityRegistryStore()
-    static let schemaVersion = 1
+    static let schemaVersion = 2
+    static let readableSchemaVersions: Set<Int> = [1, 2]
 
     let fileURL: URL
 
@@ -40,79 +53,86 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         self.decoder = decoder
     }
 
+    /// Assigns an ID to every row of a chat-list scan (`ChatIdentityAssignment.assign`):
+    /// matched records are updated, ambiguous leftovers retired, new rows recorded.
     func assignChatIDs(for discoveries: [ChatListDiscovery]) -> [String] {
         var document = loadDocument()
-        var records = document.records
         let now = Date()
-        var assignedIDs = Array(repeating: "", count: discoveries.count)
+        let rows = discoveries.map(Self.identityRow)
+        let result = ChatIdentityAssignment.assign(rows: rows, records: document.records.map(Self.identityState))
 
-        let groupedCurrent = Dictionary(grouping: discoveries.indices) { index in
-            ChatTextNormalizer.normalize(discoveries[index].title)
+        for (rowIndex, recordIndex) in result.matchedRecords.enumerated() {
+            guard let recordIndex else { continue }
+            document.records[recordIndex] = updatedRecord(document.records[recordIndex], with: discoveries[rowIndex], now: now)
         }
-        let groupedExisting = Dictionary(grouping: records.indices) { index in
-            records[index].normalizedName
+        for recordIndex in result.retiredRecords {
+            document.records[recordIndex].retired = true
+            document.records[recordIndex].retiredAt = now
         }
-
-        for (normalizedName, currentIndices) in groupedCurrent {
-            var unmatchedCurrent = currentIndices.sorted { discoveries[$0].listIndex < discoveries[$1].listIndex }
-            var unmatchedRecords = (groupedExisting[normalizedName] ?? []).sorted { lhs, rhs in
-                let lhsPreview = records[lhs].lastPreviewNormalized ?? ""
-                let rhsPreview = records[rhs].lastPreviewNormalized ?? ""
-                if lhsPreview == rhsPreview {
-                    return (records[lhs].lastSeenIndex ?? .max) < (records[rhs].lastSeenIndex ?? .max)
-                }
-                return lhsPreview < rhsPreview
-            }
-
-            for currentIndex in currentIndices {
-                let preview = normalizePreview(discoveries[currentIndex].lastMessage)
-                guard let preview, !preview.isEmpty else { continue }
-                guard let matchOffset = unmatchedRecords.firstIndex(where: { records[$0].lastPreviewNormalized == preview }) else {
-                    continue
-                }
-                let recordIndex = unmatchedRecords.remove(at: matchOffset)
-                unmatchedCurrent.removeAll { $0 == currentIndex }
-                records[recordIndex] = updatedRecord(records[recordIndex], with: discoveries[currentIndex], preview: preview, now: now)
-                assignedIDs[currentIndex] = records[recordIndex].chatID
-            }
-
-            let sortedRemainingRecords = unmatchedRecords.sorted { lhs, rhs in
-                (records[lhs].lastSeenIndex ?? .max) < (records[rhs].lastSeenIndex ?? .max)
-            }
-            let zippedCount = min(unmatchedCurrent.count, sortedRemainingRecords.count)
-            if zippedCount > 0 {
-                for offset in 0..<zippedCount {
-                    let currentIndex = unmatchedCurrent[offset]
-                    let recordIndex = sortedRemainingRecords[offset]
-                    let preview = normalizePreview(discoveries[currentIndex].lastMessage)
-                    records[recordIndex] = updatedRecord(records[recordIndex], with: discoveries[currentIndex], preview: preview, now: now)
-                    assignedIDs[currentIndex] = records[recordIndex].chatID
-                }
-                unmatchedCurrent.removeFirst(zippedCount)
-            }
-
-            for currentIndex in unmatchedCurrent {
-                let preview = normalizePreview(discoveries[currentIndex].lastMessage)
-                let chatID = nextChatID(for: normalizedName, existingRecords: records)
-                let record = ChatIdentityRecord(
-                    chatID: chatID,
-                    displayName: discoveries[currentIndex].title,
-                    normalizedName: normalizedName,
-                    lastPreviewNormalized: preview,
-                    firstSeenAt: now,
-                    lastSeenAt: now,
-                    lastSeenIndex: discoveries[currentIndex].listIndex
-                )
-                records.append(record)
-                assignedIDs[currentIndex] = chatID
-            }
+        for (rowIndex, recordIndex) in result.matchedRecords.enumerated() where recordIndex == nil {
+            document.records.append(ChatIdentityRecord(
+                chatID: result.rowIDs[rowIndex],
+                displayName: discoveries[rowIndex].title,
+                normalizedName: rows[rowIndex].normalizedName,
+                lastPreviewNormalized: rows[rowIndex].preview,
+                firstSeenAt: now,
+                lastSeenAt: now,
+                lastSeenIndex: discoveries[rowIndex].listIndex
+            ))
         }
 
-        document.records = records
+        document.schemaVersion = Self.schemaVersion
         document.updatedAt = now
         cachedDocument = document
         try? persist(document)
-        return assignedIDs
+        return result.rowIDs
+    }
+
+    /// Where `chatID` points among `discoveries` (every row with that name). Changes nothing.
+    func resolution(of chatID: String, among discoveries: [ChatListDiscovery]) -> IdentityResolution {
+        let document = loadDocument()
+        guard let record = document.records.first(where: { $0.chatID == chatID }) else {
+            return .notFound
+        }
+        let group = document.records.filter { $0.normalizedName == record.normalizedName }
+        return ChatIdentityAssignment.resolve(
+            chatID: chatID,
+            rows: discoveries.map(Self.identityRow),
+            records: group.map(Self.identityState)
+        )
+    }
+
+    /// Updates the record of `chatID` with the row it was located at. Never re-runs the
+    /// assignment, so no other record changes.
+    func refresh(chatID: String, with discovery: ChatListDiscovery) {
+        var document = loadDocument()
+        guard let index = document.records.firstIndex(where: { $0.chatID == chatID }), !document.records[index].isRetired else {
+            return
+        }
+        let now = Date()
+        document.records[index] = updatedRecord(document.records[index], with: discovery, now: now)
+        document.schemaVersion = Self.schemaVersion
+        document.updatedAt = now
+        cachedDocument = document
+        try? persist(document)
+    }
+
+    static func identityRow(_ discovery: ChatListDiscovery) -> IdentityRow {
+        IdentityRow(
+            title: discovery.title,
+            normalizedName: ChatTextNormalizer.normalize(discovery.title),
+            preview: normalizePreview(discovery.lastMessage),
+            listIndex: discovery.listIndex
+        )
+    }
+
+    static func identityState(_ record: ChatIdentityRecord) -> IdentityRecordState {
+        IdentityRecordState(
+            chatID: record.chatID,
+            normalizedName: record.normalizedName,
+            preview: record.lastPreviewNormalized,
+            retired: record.isRetired
+        )
     }
 
     func record(for chatID: String) -> ChatIdentityRecord? {
@@ -120,8 +140,9 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         return document.records.first(where: { $0.chatID == chatID })
     }
 
+    /// Records of that name that are not retired.
     func records(withNormalizedName normalizedName: String) -> [ChatIdentityRecord] {
-        loadDocument().records.filter { $0.normalizedName == normalizedName }
+        loadDocument().records.filter { $0.normalizedName == normalizedName && !$0.isRetired }
     }
 
     /// Rows earlier chat-list scans have seen (highest last-seen index + 1), if any.
@@ -129,44 +150,18 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         loadDocument().records.compactMap(\.lastSeenIndex).max().map { $0 + 1 }
     }
 
-    private func updatedRecord(
-        _ record: ChatIdentityRecord,
-        with discovery: ChatListDiscovery,
-        preview: String?,
-        now: Date
-    ) -> ChatIdentityRecord {
+    private func updatedRecord(_ record: ChatIdentityRecord, with discovery: ChatListDiscovery, now: Date) -> ChatIdentityRecord {
         var updated = record
         updated.displayName = discovery.title
         updated.lastSeenAt = now
         updated.lastSeenIndex = discovery.listIndex
-        if let preview, !preview.isEmpty {
+        if let preview = Self.normalizePreview(discovery.lastMessage) {
             updated.lastPreviewNormalized = preview
         }
         return updated
     }
 
-    private func nextChatID(for normalizedName: String, existingRecords: [ChatIdentityRecord]) -> String {
-        let base = shortHash(normalizedName)
-        let prefix = "chat_\(base)"
-        let existingIDs = Set(existingRecords.map(\.chatID))
-
-        if !existingIDs.contains(prefix) {
-            return prefix
-        }
-
-        var suffix = 2
-        while existingIDs.contains("\(prefix)_\(suffix)") {
-            suffix += 1
-        }
-        return "\(prefix)_\(suffix)"
-    }
-
-    private func shortHash(_ text: String) -> String {
-        let digest = SHA256.hash(data: Data(text.utf8))
-        return digest.prefix(6).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func normalizePreview(_ preview: String?) -> String? {
+    static func normalizePreview(_ preview: String?) -> String? {
         guard let preview else { return nil }
         let normalized = ChatTextNormalizer.normalize(preview)
         guard !normalized.isEmpty else { return nil }
@@ -187,7 +182,7 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         do {
             let data = try Data(contentsOf: fileURL)
             let document = try decoder.decode(ChatIdentityRegistryDocument.self, from: data)
-            guard document.schemaVersion == Self.schemaVersion else {
+            guard Self.readableSchemaVersions.contains(document.schemaVersion) else {
                 let reset = emptyDocument()
                 cachedDocument = reset
                 return reset

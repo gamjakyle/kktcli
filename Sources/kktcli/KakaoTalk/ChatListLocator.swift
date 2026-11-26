@@ -332,21 +332,27 @@ struct ChatListLocator {
         LocatedChatRow(index: index, element: rows[index], title: title, summary: ChatListScanner.summarize(row: rows[index]))
     }
 
-    /// Resolves a registry chat_id to its row.
+    /// Resolves a registry chat_id to its row (`ChatIdentityAssignment.resolve`).
     ///
-    /// Fast path (the name is unique in the registry): rows are checked for the exact registered
-    /// title starting at the registry's last-seen index, and the first one whose preview still
-    /// matches the registered preview (or that has none registered) is taken without reading
-    /// the rest of the list. A changed preview keeps scanning titles, so a newer room with the
-    /// same name is not mistaken for the registered one. Otherwise every row with the same
-    /// normalized name is collected and the registry's preview/position matching decides.
-    func locate(chatID: String, record: ChatIdentityRecord, in access: ChatListAccess) throws -> LocatedChatRow {
+    /// A retired ID fails with CHAT_ID_STALE. Fast path for reads (`requireUnique` false and
+    /// the name unique in the registry): rows with the exact registered title are checked from
+    /// the registry's last-seen index, and the first whose preview still matches is taken; with
+    /// a changed preview it is taken only when it is the only row with that exact title.
+    /// Otherwise (and always with `requireUnique`, used before sending) every row with the same
+    /// normalized name is collected and the record must match exactly one of them by preview or
+    /// by one-to-one elimination; never by position. Left-over same-name rooms that cannot be
+    /// told apart fail with CHAT_AMBIGUOUS and list the candidates. The located record is then
+    /// updated by chat_id; the assignment is not re-run.
+    func locate(chatID: String, record: ChatIdentityRecord, in access: ChatListAccess, requireUnique: Bool = false) throws -> LocatedChatRow {
+        if record.isRetired {
+            throw Self.staleChatID(chatID, record: record)
+        }
         let registry = ChatIdentityRegistryStore.shared
         let rows = AXNodeReader.rows(of: access.table)
         let exactName = Self.trimmed(record.displayName)
         let target = record.normalizedName
         let sameNameCount = registry.records(withNormalizedName: target).count
-        runner.log("read: chat list rows=\(rows.count) same-name registry records=\(sameNameCount)")
+        runner.log("read: chat list rows=\(rows.count) same-name registry records=\(sameNameCount) unique=\(requireUnique)")
 
         var titleCache: [Int: String?] = [:]
         func titleAt(_ index: Int) -> String? {
@@ -358,7 +364,7 @@ struct ChatListLocator {
             return title
         }
 
-        if sameNameCount <= 1 {
+        if !requireUnique, sameNameCount <= 1 {
             var order: [Int] = []
             if let hint = record.lastSeenIndex {
                 order = [hint, hint - 1, hint + 1, hint - 2, hint + 2].filter { rows.indices.contains($0) }
@@ -392,18 +398,46 @@ struct ChatListLocator {
         guard !candidates.isEmpty else {
             throw notInList(record.displayName, rowCount: rows.count)
         }
-        if candidates.count == 1, sameNameCount <= 1 {
-            return refreshRegistry(candidates[0], chatID: chatID)
-        }
-        let discoveries = candidates.map {
-            ChatListDiscovery(title: $0.title, lastMessage: $0.summary.preview, listIndex: $0.index, unread: $0.summary.unread)
-        }
-        let assigned = registry.assignChatIDs(for: discoveries)
-        guard let position = assigned.firstIndex(of: chatID) else {
+        let discoveries = candidates.map(Self.discovery)
+        switch registry.resolution(of: chatID, among: discoveries) {
+        case .row(let position):
+            runner.log("read: chat_id matched row \(candidates[position].index) among \(candidates.count) same-name row(s)")
+            return refreshRegistry(candidates[position], chatID: chatID)
+        case .stale:
+            throw Self.staleChatID(chatID, record: record)
+        case .ambiguous:
+            throw Self.ambiguousChatID(chatID, record: record, candidates: candidates)
+        case .notFound:
             throw notInList(record.displayName, rowCount: rows.count)
         }
-        runner.log("read: chat_id matched duplicate-title row \(candidates[position].index)")
-        return candidates[position]
+    }
+
+    static func discovery(_ row: LocatedChatRow) -> ChatListDiscovery {
+        ChatListDiscovery(title: row.title, lastMessage: row.summary.preview, listIndex: row.index, unread: row.summary.unread)
+    }
+
+    static func staleChatID(_ chatID: String, record: ChatIdentityRecord) -> ReadFailure {
+        ReadFailure(
+            code: "CHAT_ID_STALE",
+            message: "chat_id '\(chatID)' ('\(record.displayName)') was retired: a chat-list scan could not tell its room apart from another room with the same name, so it no longer points at any room.",
+            hint: "Run 'kktcli chats' and use the room's current chat_id.",
+            exitCode: KktcliExitStatus.staleChatID
+        )
+    }
+
+    static func ambiguousChatID(_ chatID: String, record: ChatIdentityRecord, candidates: [LocatedChatRow]) -> ReadFailure {
+        let lines = candidates.map { row -> String in
+            let summary = row.summary
+            let members = summary.memberCount.map { "\($0) members" } ?? "members unknown"
+            return "\(row.title) | \(summary.preview ?? "-") | \(summary.timeLabel ?? "-") | \(members)"
+        }
+        return ReadFailure(
+            code: "CHAT_AMBIGUOUS",
+            message: "chat_id '\(chatID)' cannot be told apart among \(candidates.count) rooms named '\(record.displayName)'; nothing was opened.",
+            hint: "Run 'kktcli chats' for fresh chat_ids and pick the room by its preview and time.",
+            exitCode: KktcliExitStatus.ambiguousChatID,
+            details: ["candidates": lines.joined(separator: "\n"), "candidate_count": String(candidates.count)]
+        )
     }
 
     /// Scans titles for a name query and stops at the first row titled exactly `query`.
@@ -451,12 +485,9 @@ struct ChatListLocator {
         return ChatTextNormalizer.normalize(row.summary.preview ?? "") == registered
     }
 
+    /// Updates the located record by chat_id; never re-runs the assignment.
     private func refreshRegistry(_ row: LocatedChatRow, chatID: String) -> LocatedChatRow {
-        let discovery = ChatListDiscovery(title: row.title, lastMessage: row.summary.preview, listIndex: row.index, unread: row.summary.unread)
-        let assigned = ChatIdentityRegistryStore.shared.assignChatIDs(for: [discovery])
-        if assigned.first != chatID {
-            runner.log("read: registry assigned '\(assigned.first ?? "")' to the matched row (expected \(chatID))")
-        }
+        ChatIdentityRegistryStore.shared.refresh(chatID: chatID, with: Self.discovery(row))
         return row
     }
 
