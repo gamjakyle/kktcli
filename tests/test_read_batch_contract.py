@@ -31,7 +31,8 @@ class ReadBatchContractTests(unittest.TestCase):
         self.assertIn("if isBatch {", read)
         self.assertIn("return try readRoom(target, session: session, startedAt: startedAt)", read)
         mapping = MCP_MAPPING.read_text(encoding="utf-8")
-        self.assertEqual(mapping.count('"--chat-id"'), 1)
+        read_request = mapping[mapping.index("public struct MCPReadRequest"):mapping.index("public enum MCPErrorMapping")]
+        self.assertEqual(read_request.count('"--chat-id"'), 1)
 
 
 if __name__ == "__main__":

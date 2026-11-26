@@ -238,3 +238,97 @@ public enum MCPErrorMapping {
         }
     }
 }
+
+/// How the MCP tools `kktcli_send` / `kktcli_send_image` turn their arguments into a
+/// `kktcli send` / `send-image` invocation. `mode` "preview" (the default) never sends;
+/// "send" opens the confirmation dialog on the user's screen and waits for it.
+public struct MCPSendRequest: Equatable, Sendable {
+    public enum Kind: String, Sendable {
+        case text
+        case image
+    }
+
+    public enum Mode: String, Sendable {
+        case preview
+        case send
+    }
+
+    /// The dialog cancels itself after 120 s; the call waits at least this long.
+    public static let minimumSendTimeout: Double = 130
+    public static let previewTimeout: Double = 20
+
+    public var kind: Kind
+    public var chat: String?
+    public var chatID: String?
+    /// The message (text) or the image path (image).
+    public var payload: String
+    public var mode: Mode
+    public var keepWindow: Bool
+    public var traceAX: Bool
+    public var idleSeconds: Double?
+    public var waitForIdleSeconds: Double?
+    public var allowActivate: Bool
+
+    public init(
+        kind: Kind,
+        chat: String? = nil,
+        chatID: String? = nil,
+        payload: String,
+        mode: Mode = .preview,
+        keepWindow: Bool = false,
+        traceAX: Bool = false,
+        idleSeconds: Double? = nil,
+        waitForIdleSeconds: Double? = nil,
+        allowActivate: Bool = false
+    ) {
+        self.kind = kind
+        self.chat = chat
+        self.chatID = chatID
+        self.payload = payload
+        self.mode = mode
+        self.keepWindow = keepWindow
+        self.traceAX = traceAX
+        self.idleSeconds = idleSeconds
+        self.waitForIdleSeconds = waitForIdleSeconds
+        self.allowActivate = allowActivate
+    }
+
+    /// `mode` from the tool arguments: nil or "preview" → preview, "send" → send, anything
+    /// else invalid.
+    public static func mode(from raw: String?) -> Mode? {
+        guard let raw else { return .preview }
+        return Mode(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    private static func bounded(_ seconds: Double) -> Double {
+        min(max(0, seconds), UserActivityPolicy.maximumSeconds)
+    }
+
+    public var arguments: [String] {
+        var arguments = [kind == .text ? "send" : "send-image"]
+        if let chatID, !chatID.isEmpty {
+            arguments += ["--chat-id", chatID, payload]
+        } else {
+            arguments += [chat ?? "", payload]
+        }
+        arguments.append("--json")
+        if mode == .preview { arguments.append("--preview") }
+        if keepWindow { arguments.append("--keep-window") }
+        if traceAX { arguments.append("--trace-ax") }
+        if let idleSeconds { arguments += ["--idle-seconds", Self.format(Self.bounded(idleSeconds))] }
+        if let waitForIdleSeconds { arguments += ["--wait-for-idle", Self.format(Self.bounded(waitForIdleSeconds))] }
+        if allowActivate { arguments.append("--allow-activate") }
+        return arguments
+    }
+
+    /// Preview: 20 s; send: at least 130 s (the dialog's 120 s plus margin). Both are extended
+    /// by the wait for an idle user.
+    public var timeout: Double {
+        let wait = Self.bounded(waitForIdleSeconds ?? UserActivityPolicy.defaultWaitSeconds)
+        return (mode == .send ? Self.minimumSendTimeout : Self.previewTimeout) + wait
+    }
+
+    private static func format(_ seconds: Double) -> String {
+        seconds == seconds.rounded() ? String(Int(seconds)) : String(seconds)
+    }
+}

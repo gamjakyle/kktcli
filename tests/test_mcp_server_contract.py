@@ -53,6 +53,22 @@ class MCPServerContractTests(unittest.TestCase):
         self.assertIn("deepRecoveryTimeout: Double = 15", mapping)
         self.assertIn("timeoutSec: request.timeout", source)
 
+    def test_send_tools_preview_by_default_and_never_send_without_the_dialog(self) -> None:
+        source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
+        mapping = MCP_MAPPING.read_text(encoding="utf-8")
+        self.assertNotIn('"confirm"', source)
+        self.assertNotIn("CONFIRMATION_REQUIRED", source)
+        self.assertIn('"enum": ["preview", "send"]', source)
+        self.assertIn('"default": "preview"', source)
+        self.assertIn("MCPSendRequest.mode(from: arguments[\"mode\"] as? String)", source)
+        for key in ('"sent": report.sent', '"cancelled": report.cancelled', '"bubble_verified": report.bubbleVerified'):
+            self.assertIn(key, source)
+        self.assertIn("public static let minimumSendTimeout: Double = 130", mapping)
+        self.assertIn('if mode == .preview { arguments.append("--preview") }', mapping)
+        # The drafting rules and the explicit 보내 are in the server instructions.
+        for text in ("verbatim", "never add facts", "at most 3 lines", "mode=preview first", "explicit 보내", "never send in bulk"):
+            self.assertIn(text, source)
+
     def test_read_errors_keep_the_codes_kktcli_reports(self) -> None:
         source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
         mapping = MCP_MAPPING.read_text(encoding="utf-8")

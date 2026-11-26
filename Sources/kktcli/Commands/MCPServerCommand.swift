@@ -257,7 +257,7 @@ private final class KktcliMCPServer {
                         "name": "kktcli",
                         "version": serverVersion,
                     ],
-                    "instructions": "Use kktcli_read for read-only operations. It opens rooms with unread messages like any other, which sends read receipts exactly as opening them by hand; pass skip_unread=true to leave such rooms unopened (UNREAD_REFUSED). meta.read.unread_before / unread_after / marked_read report the chat-list badge before and after. While the user is busy in KakaoTalk it waits (KAKAOTALK_IN_USE after wait_for_idle); it never brings KakaoTalk to the front unless allow_activate=true (MAIN_WINDOW_NOT_VISIBLE otherwise). Use kktcli_send and kktcli_send_image only when the user explicitly asked to send, with confirm=false (or omitted); confirm=true returns CONFIRMATION_REQUIRED without sending. Never send in bulk.",
+                    "instructions": "Use kktcli_read for read-only operations. It opens rooms with unread messages like any other, which sends read receipts exactly as opening them by hand; pass skip_unread=true to leave such rooms unopened (UNREAD_REFUSED). While the user is busy in KakaoTalk it waits (KAKAOTALK_IN_USE after wait_for_idle); it never brings KakaoTalk to the front unless allow_activate=true (MAIN_WINDOW_NOT_VISIBLE otherwise). Sending: draft concisely, keep dates, times, places, amounts, links and asks verbatim, drop greetings, background and repetition and tell the user what you dropped, never add facts, at most 3 lines unless the user asked for more. Always call kktcli_send (or kktcli_send_image) with mode=preview first, show the user the preview (recipient, last messages, exact text) and wait for their explicit 보내 before calling it again with mode=send; the user then confirms once more in a dialog on their screen. One message per call; never send in bulk; never retry a send whose result is uncertain without reading the room first.",
                     "meta": [
                         "startup_check": startupCheck,
                     ],
@@ -382,72 +382,18 @@ private final class KktcliMCPServer {
                     "additionalProperties": false,
                 ],
             ],
-            [
-                "name": "kktcli_send",
-                "description": "Send a KakaoTalk message via kktcli. Default sends immediately; confirm=true triggers confirmation-required response.",
-                "inputSchema": [
-                    "type": "object",
-                    "properties": [
-                        "chat": ["type": "string", "description": "Chat room or user name"],
-                        "message": ["type": "string", "description": "Message body"],
-                        "confirm": [
-                            "type": "boolean",
-                            "default": false,
-                            "description": "If true, do not send and return CONFIRMATION_REQUIRED",
-                        ],
-                        "deep_recovery": [
-                            "type": "boolean",
-                            "default": deepRecoveryDefault,
-                            "description": "Enable deep recovery mode for window resolution",
-                        ],
-                        "keep_window": [
-                            "type": "boolean",
-                            "default": false,
-                            "description": "Keep auto-opened KakaoTalk window",
-                        ],
-                        "trace_ax": [
-                            "type": "boolean",
-                            "default": traceDefault,
-                            "description": "Include AX tracing logs",
-                        ],
-                    ],
-                    "required": ["chat", "message"],
-                    "additionalProperties": false,
-                ],
-            ],
-            [
-                "name": "kktcli_send_image",
-                "description": "Send an image to a KakaoTalk chat via kktcli. Default sends immediately; confirm=true triggers confirmation-required response.",
-                "inputSchema": [
-                    "type": "object",
-                    "properties": [
-                        "chat": ["type": "string", "description": "Chat room or user name"],
-                        "image_path": ["type": "string", "description": "Path to the image file"],
-                        "confirm": [
-                            "type": "boolean",
-                            "default": false,
-                            "description": "If true, do not send and return CONFIRMATION_REQUIRED",
-                        ],
-                        "deep_recovery": [
-                            "type": "boolean",
-                            "default": deepRecoveryDefault,
-                            "description": "Enable deep recovery mode for window resolution",
-                        ],
-                        "keep_window": [
-                            "type": "boolean",
-                            "default": false,
-                            "description": "Keep auto-opened KakaoTalk window",
-                        ],
-                        "trace_ax": [
-                            "type": "boolean",
-                            "default": traceDefault,
-                            "description": "Include AX tracing logs",
-                        ],
-                    ],
-                    "required": ["chat", "image_path"],
-                    "additionalProperties": false,
-                ],
-            ],
+            sendToolDefinition(
+                name: "kktcli_send",
+                description: "Send one KakaoTalk text message, only ever after the user saw it. mode=preview (the default) sends nothing: it opens the room like kktcli_read and returns who it goes to (title, kind, members, chat_id), the last 3 messages, a same-name warning and the exact text with line and character counts. mode=send shows a confirmation dialog on the user's screen (room, last messages, full text; 취소 is the default; 보내기 needs a real mouse click) and waits up to 120 s for it; the result reports sent, cancelled and bubble_verified. Call mode=send only after the user saw the preview and explicitly said 보내.",
+                payloadKey: "message",
+                payloadDescription: "The exact message text (at most 3 lines unless the user asked for more)"
+            ),
+            sendToolDefinition(
+                name: "kktcli_send_image",
+                description: "Send one image to a KakaoTalk chat, only ever after the user saw it. mode=preview (the default) sends nothing; mode=send shows the same confirmation dialog (room, last messages, file name and size) and waits for it. The clipboard is restored afterwards.",
+                payloadKey: "image_path",
+                payloadDescription: "Absolute path to a local image file"
+            ),
         ]
     }
 
@@ -643,162 +589,115 @@ private final class KktcliMCPServer {
         return response
     }
 
-    private func callSend(_ arguments: JSONDict) -> JSONDict {
-        let chat = String(describing: arguments["chat"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let message = String(describing: arguments["message"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let confirm = boolValue(arguments["confirm"], defaultValue: false)
-
-        if chat.isEmpty || message.isEmpty {
-            return errorPayload(
-                code: "INVALID_ARGUMENT",
-                message: "chat and message are required",
-                hint: "Provide both chat and message.",
-                rawStdout: "",
-                rawStderr: "",
-                latencyMs: 0
-            )
-        }
-
-        if confirm {
-            return errorPayload(
-                code: "CONFIRMATION_REQUIRED",
-                message: "kktcli_send blocked because confirm=true requests pre-send confirmation",
-                hint: "Ask user for explicit approval, then call again with confirm=false (or omit confirm).",
-                rawStdout: "",
-                rawStderr: "",
-                latencyMs: 0
-            )
-        }
-
-        let deepRecovery = boolValue(arguments["deep_recovery"], defaultValue: deepRecoveryDefault)
-        let keepWindow = boolValue(arguments["keep_window"], defaultValue: false)
-        let traceAX = boolValue(arguments["trace_ax"], defaultValue: traceDefault)
-
-        var command = ["send", chat, message]
-        if deepRecovery { command.append("--deep-recovery") }
-        if keepWindow { command.append("--keep-window") }
-        if traceAX { command.append("--trace-ax") }
-
-        let run = runner.run(command, timeoutSec: deepRecovery ? 18.0 : 10.0)
-        if run.timedOut {
-            return errorPayload(
-                code: "PROCESS_TIMEOUT",
-                message: "kktcli send timed out",
-                hint: "Retry after ensuring KakaoTalk is responsive.",
-                rawStdout: run.stdout,
-                rawStderr: run.stderr,
-                latencyMs: run.latencyMs
-            )
-        }
-        if run.returncode != 0 {
-            let code = MCPErrorMapping.code(returnCode: run.returncode, stdout: run.stdout, stderr: run.stderr)
-            return errorPayload(
-                code: code,
-                message: "kktcli send failed",
-                hint: MCPErrorMapping.hint(for: code),
-                rawStdout: run.stdout,
-                rawStderr: run.stderr,
-                latencyMs: run.latencyMs
-            )
-        }
-
-        var response: JSONDict = [
-            "ok": true,
-            "chat": chat,
-            "sent": true,
-            "meta": [
-                "latency_ms": run.latencyMs,
-                "stdout": run.stdout,
+    private func sendToolDefinition(name: String, description: String, payloadKey: String, payloadDescription: String) -> [String: Any] {
+        [
+            "name": name,
+            "description": description,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "chat": ["type": "string", "description": "Exact chat name (must be unique; prefer chat_id)"],
+                    "chat_id": ["type": "string", "description": "chat_id from kktcli chats"],
+                    payloadKey: ["type": "string", "description": payloadDescription],
+                    "mode": [
+                        "type": "string",
+                        "enum": ["preview", "send"],
+                        "default": "preview",
+                        "description": "preview (default) sends nothing; send opens the confirmation dialog and waits for the user",
+                    ],
+                    "keep_window": ["type": "boolean", "default": false, "description": "Keep the chat window kktcli opened"],
+                    "idle_seconds": ["type": "number", "minimum": 0, "maximum": UserActivityPolicy.maximumSeconds, "description": "While KakaoTalk is in front, press nothing until input was idle this long (default 10)"],
+                    "wait_for_idle": ["type": "number", "minimum": 0, "maximum": UserActivityPolicy.maximumSeconds, "description": "Seconds to wait for that before KAKAOTALK_IN_USE (default 30)"],
+                    "allow_activate": ["type": "boolean", "default": false, "description": "Allow bringing KakaoTalk to the front (hidden main window; Enter fallback). Only with the user's consent."],
+                    "trace_ax": ["type": "boolean", "default": traceDefault, "description": "Include AX tracing logs"],
+                ],
+                "required": [payloadKey],
+                "additionalProperties": false,
             ],
         ]
-        if traceAX, !run.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            var meta = response["meta"] as? JSONDict ?? [:]
-            meta["stderr_trace"] = run.stderr
-            response["meta"] = meta
-        }
-        return response
+    }
+
+    private func callSend(_ arguments: JSONDict) -> JSONDict {
+        callSendTool(arguments, kind: .text, payloadKey: "message")
     }
 
     private func callSendImage(_ arguments: JSONDict) -> JSONDict {
-        let chat = String(describing: arguments["chat"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let imagePath = String(describing: arguments["image_path"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let confirm = boolValue(arguments["confirm"], defaultValue: false)
+        callSendTool(arguments, kind: .image, payloadKey: "image_path")
+    }
 
-        if chat.isEmpty || imagePath.isEmpty {
-            return errorPayload(
-                code: "INVALID_ARGUMENT",
-                message: "chat and image_path are required",
-                hint: "Provide both chat and image_path.",
-                rawStdout: "",
-                rawStderr: "",
-                latencyMs: 0
-            )
+    private func callSendTool(_ arguments: JSONDict, kind: MCPSendRequest.Kind, payloadKey: String) -> JSONDict {
+        let chat = (arguments["chat"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chatID = (arguments["chat_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = (arguments[payloadKey] as? String) ?? ""
+        let invalid = { (message: String, hint: String) in
+            self.errorPayload(code: "INVALID_ARGUMENT", message: message, hint: hint, rawStdout: "", rawStderr: "", latencyMs: 0)
         }
-
-        if confirm {
-            return errorPayload(
-                code: "CONFIRMATION_REQUIRED",
-                message: "kktcli_send_image blocked because confirm=true requests pre-send confirmation",
-                hint: "Ask user for explicit approval, then call again with confirm=false (or omit confirm).",
-                rawStdout: "",
-                rawStderr: "",
-                latencyMs: 0
-            )
+        guard (chat?.isEmpty == false) != (chatID?.isEmpty == false) else {
+            return invalid("Give exactly one of chat and chat_id", "Prefer chat_id from kktcli chats.")
         }
-
-        if !FileManager.default.fileExists(atPath: imagePath) {
-            return errorPayload(
-                code: "INVALID_ARGUMENT",
-                message: "image_path must point to an existing file",
-                hint: "Provide a valid local image file path.",
-                rawStdout: "",
-                rawStderr: "",
-                latencyMs: 0
-            )
+        guard !payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return invalid("\(payloadKey) is required", "Provide \(payloadKey).")
         }
-
-        let deepRecovery = boolValue(arguments["deep_recovery"], defaultValue: deepRecoveryDefault)
-        let keepWindow = boolValue(arguments["keep_window"], defaultValue: false)
-        let traceAX = boolValue(arguments["trace_ax"], defaultValue: traceDefault)
-
-        var command = ["send-image", chat, imagePath]
-        if deepRecovery { command.append("--deep-recovery") }
-        if keepWindow { command.append("--keep-window") }
-        if traceAX { command.append("--trace-ax") }
-
-        let run = runner.run(command, timeoutSec: deepRecovery ? 20.0 : 12.0)
+        guard let mode = MCPSendRequest.mode(from: arguments["mode"] as? String) else {
+            return invalid("mode must be preview or send", "Use mode=preview first; mode=send only after the user said 보내.")
+        }
+        var waits: [String: Double] = [:]
+        for key in ["idle_seconds", "wait_for_idle"] {
+            guard let raw = arguments[key], !(raw is NSNull) else { continue }
+            guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+                return invalid("\(key) must be a number of seconds", "Use a number between 0 and \(Int(UserActivityPolicy.maximumSeconds)).")
+            }
+            waits[key] = number.doubleValue
+        }
+        let request = MCPSendRequest(
+            kind: kind,
+            chat: chat,
+            chatID: chatID,
+            payload: payload,
+            mode: mode,
+            keepWindow: boolValue(arguments["keep_window"], defaultValue: false),
+            traceAX: boolValue(arguments["trace_ax"], defaultValue: traceDefault),
+            idleSeconds: waits["idle_seconds"],
+            waitForIdleSeconds: waits["wait_for_idle"],
+            allowActivate: boolValue(arguments["allow_activate"], defaultValue: false)
+        )
+        let run = runner.run(request.arguments, timeoutSec: request.timeout)
         if run.timedOut {
             return errorPayload(
                 code: "PROCESS_TIMEOUT",
-                message: "kktcli send-image timed out",
-                hint: "Retry after ensuring KakaoTalk is responsive.",
+                message: "kktcli \(request.arguments[0]) timed out after \(Int(request.timeout)) s; the dialog may still have been open. Check the room before doing anything else.",
+                hint: "Do not send again before checking the room with kktcli_read.",
                 rawStdout: run.stdout,
                 rawStderr: run.stderr,
                 latencyMs: run.latencyMs
             )
         }
-        if run.returncode != 0 {
+        guard let data = run.stdout.data(using: .utf8),
+              let report = try? JSONDecoder().decode(SendReport.self, from: data)
+        else {
             let code = MCPErrorMapping.code(returnCode: run.returncode, stdout: run.stdout, stderr: run.stderr)
-            return errorPayload(
-                code: code,
-                message: "kktcli send-image failed",
-                hint: MCPErrorMapping.hint(for: code),
-                rawStdout: run.stdout,
-                rawStderr: run.stderr,
-                latencyMs: run.latencyMs
-            )
+            return errorPayload(code: code, message: "kktcli \(request.arguments[0]) returned no report", hint: MCPErrorMapping.hint(for: code), rawStdout: run.stdout, rawStderr: run.stderr, latencyMs: run.latencyMs)
         }
-
         var response: JSONDict = [
-            "ok": true,
-            "chat": chat,
-            "sent": true,
-            "meta": [
-                "latency_ms": run.latencyMs,
-                "stdout": run.stdout,
-            ],
+            "ok": report.ok,
+            "mode": report.mode,
+            "sent": report.sent,
+            "cancelled": report.cancelled,
+            "bubble_verified": report.bubbleVerified,
+            "meta": ["latency_ms": run.latencyMs, "window": (report.window as Any?) ?? NSNull(), "method": (report.method as Any?) ?? NSNull()] as JSONDict,
         ]
-        if traceAX, !run.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let preview = report.preview, let encoded = try? JSONEncoder().encode(preview),
+           let object = try? JSONSerialization.jsonObject(with: encoded)
+        {
+            response["preview"] = object
+            response["preview_text"] = preview.humanText
+        }
+        if let file = report.file { response["file"] = file }
+        if let error = report.error {
+            response["error"] = ["code": error.code, "message": error.message, "hint": error.hint ?? MCPErrorMapping.hint(for: error.code)]
+            response["details"] = report.details
+        }
+        if request.traceAX, !run.stderr.isEmpty {
             var meta = response["meta"] as? JSONDict ?? [:]
             meta["stderr_trace"] = run.stderr
             response["meta"] = meta
