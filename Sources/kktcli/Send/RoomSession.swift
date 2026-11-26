@@ -60,16 +60,7 @@ final class RoomSession {
 
     private func listAccess() throws -> ChatListAccess {
         let (mainWindow, _) = try locator.requireMainWindow(allowOpenCommand: false, access: mainWindowAccess)
-        guard let access = locator.access(in: mainWindow)
-            ?? locator.access(in: mainWindow, patience: ChatListLocator.mainWindowRecheckDuration)
-        else {
-            throw ReadFailure(
-                code: "CHAT_LIST_UNAVAILABLE",
-                message: "KakaoTalk's main window shows no chat list table.",
-                hint: "Switch KakaoTalk's main window to the 채팅 tab and retry."
-            )
-        }
-        return access
+        return try locator.verifiedAccess(in: mainWindow, activity: activity).access
     }
 
     /// Rows whose normalized title is `normalizedName`, with their indices.

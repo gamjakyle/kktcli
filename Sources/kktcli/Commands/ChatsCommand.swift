@@ -148,10 +148,20 @@ struct ChatsCommand: ParsableCommand {
         }
 
         runner.log("chats: usable window ready")
+        // Only the verified chat list is read and recorded: another tab (e.g. 친구) is switched
+        // away from with 창 > 채팅, or nothing is written and CHAT_LIST_UNAVAILABLE is reported.
+        let locator = ChatListLocator(kakao: kakao, runner: runner)
+        if try locator.verifiedAccess(in: mainWindow, activity: activity).switched {
+            FileHandle.standardError.write(Data("Note: KakaoTalk's main window was switched to the 채팅 tab.\n".utf8))
+        }
         let scanner = ChatListScanner()
         let snapshots = scanner.scan(in: mainWindow, limit: limit, trace: { message in
             runner.log(message)
         })
+        let verification = ChatListCheck.verify(snapshots.compactMap(\.summary))
+        if case .notChatList = verification {
+            throw ChatListLocator.notChatList(verification, switched: false)
+        }
 
         if snapshots.isEmpty {
             runner.log("chats: no chat items found after traversal")

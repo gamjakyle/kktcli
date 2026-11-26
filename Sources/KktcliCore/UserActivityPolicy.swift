@@ -15,6 +15,8 @@ public enum UserActivityPress: String, Sendable {
     case listRecovery
     /// The old search / Enter based opening (`--legacy-open`).
     case legacyOpen
+    /// KakaoTalk's 창 menu item 채팅 (⌘2), to show the chat tab in the main window.
+    case switchToChatTab
 
     /// The press activates KakaoTalk itself, so it needs an idle user even when another app is
     /// in front.

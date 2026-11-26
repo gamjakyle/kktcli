@@ -59,7 +59,8 @@ struct ChatListRecoverer {
         in mainWindow: UIElement,
         table: AXUIElement?,
         registryRowCount: Int?,
-        targetLastSeenIndex: Int?
+        targetLastSeenIndex: Int?,
+        tableVerified: Bool
     ) -> ChatListRecoveryReport? {
         let rowsBefore = table.map { AXNodeReader.rowCount(of: $0) } ?? 0
         let controls = readControls(in: mainWindow)
@@ -70,7 +71,8 @@ struct ChatListRecoverer {
             hasClearButton: controls.clearButton != nil,
             hasSearchToggle: controls.toggle != nil,
             registryRowCount: registryRowCount,
-            targetLastSeenIndex: targetLastSeenIndex
+            targetLastSeenIndex: targetLastSeenIndex,
+            tableVerified: tableVerified
         ))
         runner.log("read: list recovery rows=\(rowsBefore) field visible=\(controls.searchFieldVisible) plan=\(plan)")
 

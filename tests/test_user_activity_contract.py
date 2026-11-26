@@ -107,7 +107,7 @@ class OpenChatListContractTests(unittest.TestCase):
         locator = read(LOCATOR)
         self.assertIn("func confirmMainWindow(within duration: TimeInterval = ChatListLocator.mainWindowRecheckDuration) -> UIElement? {", locator)
         self.assertIn("case .alreadyVisible(let main):", locator)
-        self.assertIn("locator.access(in: mainWindow, patience: ChatListLocator.mainWindowRecheckDuration)", read(READ_COMMAND))
+        self.assertIn("self.access(in: mainWindow, patience: Self.mainWindowRecheckDuration)", locator)
         self.assertIn("if let main = ChatListLocator(kakao: kakao, runner: runner).confirmMainWindow() {", read(CHATS_COMMAND))
 
     def test_classification_only_reads(self) -> None:

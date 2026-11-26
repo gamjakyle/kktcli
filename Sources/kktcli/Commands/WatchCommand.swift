@@ -164,20 +164,34 @@ struct WatchCommand: ParsableCommand {
 
         while !ReadInterruption.requested {
             if let deadline, Date() >= deadline { break }
-            guard let main = locator.mainWindow() ?? locator.confirmMainWindow(),
-                  let access = locator.access(in: main) ?? locator.access(in: main, patience: ChatListLocator.mainWindowRecheckDuration)
-            else {
+            guard let main = locator.mainWindow() ?? locator.confirmMainWindow() else {
                 if lastStatus != "main_window_not_visible" {
+                    let evidence = KakaoTalkInputGuard.shared.currentEvidence()
                     let failure = MainWindowAccess(runner: runner, activity: activity, allowActivate: false)
-                        .notVisible(kakao: kakao, kakaoPID: KakaoTalkInputGuard.shared.currentEvidence().kakaoPID, frontmost: false)
+                        .notVisible(kakao: kakao, kakaoPID: evidence.kakaoPID, frontmost: FrontmostPolicy.keyboard(evidence).allowed)
                     output.status("main_window_not_visible", details: failure.details)
                     lastStatus = "main_window_not_visible"
                 }
                 Thread.sleep(forTimeInterval: pollInterval ?? 3.0)
                 continue
             }
+            // The main window is there; is it showing the chat list? Another tab (e.g. 친구) or no
+            // table is reported as such. watch --all never clicks, so it does not switch tabs.
+            let candidate = locator.access(in: main) ?? locator.access(in: main, patience: ChatListLocator.mainWindowRecheckDuration)
+            let verification = locator.verify(candidate)
+            guard let access = candidate, verification.isChatList || verification == .empty else {
+                if lastStatus != "not_chat_tab" {
+                    output.status("not_chat_tab", details: [
+                        "chat_list": "\(verification)",
+                        "hint": "Switch KakaoTalk's main window to the 채팅 tab (⌘2); watch --all keeps polling.",
+                    ])
+                    lastStatus = "not_chat_tab"
+                }
+                Thread.sleep(forTimeInterval: pollInterval ?? 3.0)
+                continue
+            }
             if lastStatus != nil {
-                output.status("main_window_visible", details: [:])
+                output.status("chat_list_visible", details: [:])
                 lastStatus = nil
             }
 

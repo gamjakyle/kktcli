@@ -77,6 +77,7 @@ struct ChatListEntry: Codable, Equatable {
 struct ChatListSnapshotItem {
     let element: UIElement
     let discovery: ChatListDiscovery
+    var summary: ChatRowSummary? = nil
 }
 
 /// Reads chat-list rows by element identifier (see `ChatRowAnalyzer`).
@@ -115,7 +116,7 @@ struct ChatListScanner {
                 listIndex: index,
                 unread: summary.unread
             )
-            snapshots.append(ChatListSnapshotItem(element: row, discovery: discovery))
+            snapshots.append(ChatListSnapshotItem(element: row, discovery: discovery, summary: summary))
         }
 
         trace?("chats: resolved rows=\(snapshots.count)")

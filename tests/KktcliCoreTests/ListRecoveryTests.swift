@@ -106,4 +106,15 @@ struct ListRecoveryTests {
         #expect(!MainWindowMenuItem.isShowMainWindowItem(AXNodeSnapshot(role: "AXMenuItem", identifier: "terminate:", title: "카카오톡 열기")))
         #expect(!MainWindowMenuItem.isShowMainWindowItem(AXNodeSnapshot(role: "AXButton", identifier: "showFirstWindow:", title: "카카오톡 열기")))
     }
+
+    @Test("Nothing is pressed on a table that is not verified as the chat list")
+    func unverifiedTable() {
+        let visible = ChatListObservation(rowCount: 0, searchFieldVisible: true, searchText: "홍길동", hasClearButton: true, hasSearchToggle: true, tableVerified: false)
+        #expect(ChatListRecovery.plan(visible) == .none(reason: "the table is not verified as the chat list"))
+        let hidden = ChatListObservation(rowCount: 3, searchFieldVisible: false, searchText: nil, hasClearButton: false, hasSearchToggle: true, registryRowCount: 180, tableVerified: false)
+        #expect(ChatListRecovery.plan(hidden) == .none(reason: "the table is not verified as the chat list"))
+        var verified = hidden
+        verified.tableVerified = true
+        #expect(ChatListRecovery.plan(verified) == .revealHiddenSearch)
+    }
 }

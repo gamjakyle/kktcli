@@ -597,10 +597,17 @@ struct ReadCommand: ParsableCommand {
         }
 
         // 2. The chat list, opened through the row's context menu.
-        let (mainWindow, mainWindowAction) = try locator.requireMainWindow(allowOpenCommand: deepRecovery, access: session.mainWindowAccess)
-        // A missing table is looked for again before list recovery presses anything.
-        var access = locator.access(in: mainWindow)
-            ?? locator.access(in: mainWindow, patience: ChatListLocator.mainWindowRecheckDuration)
+        let (mainWindow, reopened) = try locator.requireMainWindow(allowOpenCommand: deepRecovery, access: session.mainWindowAccess)
+        // Only a verified chat list is used (another tab, e.g. 친구, is switched away from with
+        // 창 > 채팅, or nothing is read); list recovery never runs on a table that is not it.
+        let verified: (access: ChatListAccess, switched: Bool, verified: Bool)
+        do {
+            verified = try locator.verifiedAccess(in: mainWindow, activity: session.activity)
+        } catch let failure as ReadFailure {
+            throw reopened.map { failure.adding(["main_window": $0.rawValue]) } ?? failure
+        }
+        let mainWindowAction = verified.switched ? ChatListLocator.MainWindowAction.switchedToChatTab : reopened
+        var access: ChatListAccess? = verified.access
         var listRecovery: ChatListRecoveryReport?
 
         // Only when the wanted row is missing: a leftover search filter may hide it. Restores the
@@ -613,7 +620,8 @@ struct ReadCommand: ParsableCommand {
                 in: mainWindow,
                 table: access?.table,
                 registryRowCount: ChatIdentityRegistryStore.shared.knownRowCount(),
-                targetLastSeenIndex: lastSeenIndex
+                targetLastSeenIndex: lastSeenIndex,
+                tableVerified: verified.verified
             )
             guard listRecovery?.restored == true else { return false }
             access = locator.access(in: mainWindow)

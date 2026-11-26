@@ -365,6 +365,11 @@ struct ChatWindowResolver {
             runner.log("chat_id: chat list scan returned no rows")
             return nil
         }
+        // Never record or match chat_ids against a table that is not the chat list.
+        guard ChatListCheck.verify(snapshots.compactMap(\.summary)).isChatList else {
+            runner.log("chat_id: the scanned table is not the chat list; nothing recorded")
+            return nil
+        }
 
         let registry = ChatIdentityRegistryStore.shared
         let assignedIDs = registry.assignChatIDs(for: snapshots.map(\.discovery))

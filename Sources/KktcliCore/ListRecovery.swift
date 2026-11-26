@@ -19,6 +19,9 @@ public struct ChatListObservation: Equatable, Sendable {
     public var registryRowCount: Int?
     /// The wanted room's last-seen row index (`--chat-id`), when known.
     public var targetLastSeenIndex: Int?
+    /// The table was positively verified as the chat list (`ChatListCheck`). Nothing is
+    /// pressed on a table that was not: another tab's list must never be "recovered".
+    public var tableVerified: Bool
 
     public init(
         rowCount: Int,
@@ -27,7 +30,8 @@ public struct ChatListObservation: Equatable, Sendable {
         hasClearButton: Bool,
         hasSearchToggle: Bool,
         registryRowCount: Int? = nil,
-        targetLastSeenIndex: Int? = nil
+        targetLastSeenIndex: Int? = nil,
+        tableVerified: Bool = true
     ) {
         self.rowCount = rowCount
         self.searchFieldVisible = searchFieldVisible
@@ -36,6 +40,7 @@ public struct ChatListObservation: Equatable, Sendable {
         self.hasSearchToggle = hasSearchToggle
         self.registryRowCount = registryRowCount
         self.targetLastSeenIndex = targetLastSeenIndex
+        self.tableVerified = tableVerified
     }
 }
 
@@ -61,6 +66,9 @@ public enum ChatListRecovery {
 
     /// Called only after the wanted row was not found.
     public static func plan(_ observation: ChatListObservation) -> ChatListRecoveryPlan {
+        guard observation.tableVerified else {
+            return .none(reason: "the table is not verified as the chat list")
+        }
         guard observation.hasSearchToggle else {
             return .none(reason: "the main window has no 검색 toggle")
         }
