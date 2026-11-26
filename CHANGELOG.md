@@ -22,6 +22,17 @@ breaking changes are marked **BREAKING**.
   ID from `chats` resolves right away.
 - The registry (`~/.kktcli/chat-registry.json`) moves to schema 3 (time text and member
   count per record); existing IDs are kept.
+- Fixed: chat-registry updates were lost between concurrent kktcli processes. Each process
+  kept its own copy of the registry and wrote it back whole, so a long-running `watch`, MCP
+  server or batch read overwrote chat_ids another process had just given out (a fresh ID from
+  `chats` then failed with `UNKNOWN_CHAT_ID`). Every change now re-reads the file under an
+  exclusive lock (`~/.kktcli/chat-registry.lock`), applies to that copy and replaces the file
+  atomically (0600); a scan that changed nothing but timestamps writes nothing. A file of a
+  newer schema is never overwritten, and an unreadable one is kept aside
+  (`chat-registry.json.unreadable-<time>`) instead. `~/.kktcli/ax-cache.json` (AX paths) is
+  written the same way, and the main window's element id moved to its own file
+  (`main-window-id.json`) instead of sharing `ax-cache.json`. Processes of earlier builds
+  still write the old way: stop them before running this one.
 
 ### Reading, keeping and exporting
 - Read messages are kept in `~/.kktcli/messages/<chat_id>.jsonl` (plain text, directory
@@ -38,7 +49,7 @@ breaking changes are marked **BREAKING**.
 ### Main window on any desktop
 - **BREAKING** The main window is found wherever it is, without bringing KakaoTalk to the
   front: on another desktop or full-screen Space by its Accessibility element id (read in
-  place, `meta.main_window: "other_desktop"`; id cached in `~/.kktcli/ax-cache.json`; private
+  place, `meta.main_window: "other_desktop"`; id cached in `~/.kktcli/main-window-id.json`; private
   function looked up at run time, skipped where missing, off with
   `KKTCLI_NO_ELEMENT_ID_SCAN=1`); a closed one is opened with 창 > 채팅 (⌘2), which does not
   activate KakaoTalk (`opened_via_window_menu`). 카카오톡 열기 now needs `--allow-activate`

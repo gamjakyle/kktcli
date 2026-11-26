@@ -31,7 +31,7 @@ CLI commands (Sources/kktcli/Commands)
 | `StructuredTranscriptReader` | Locates the transcript (`_NS:32` scroll area), reads rows newest-first until the limit and its context are covered, loads older rows by setting the scroll bar to 0 and polling the row count, probes for an earlier date separator. |
 | `UserActivityGuard` | Before each press that opens or brings up a KakaoTalk window: waits while KakaoTalk may be frontmost and the HID idle time is below `--idle-seconds` (always for 카카오톡 열기), re-checks right before the press, gives up with `KAKAOTALK_IN_USE`. Decision in `KktcliCore/UserActivityPolicy`. |
 | `MainWindowAccess` | Finds the main window in the order of `MainWindowLookup`: kAXWindows (with a patient re-check), by element id on another desktop, 창 > 채팅 when the window server shows it is closed, 카카오톡 열기 only with `--allow-activate`; otherwise `MAIN_WINDOW_NOT_VISIBLE` with what each step saw. |
-| `KakaoWindowLookup`, `RemoteAXElement` | Read-only window lookup across desktops: kAXWindows plus elements by id through the private `_AXUIElementCreateWithRemoteToken` (dlsym; skipped when missing), the main window's id cached in `~/.kktcli/ax-cache.json`; windows a press opens on another desktop. |
+| `KakaoWindowLookup`, `RemoteAXElement` | Read-only window lookup across desktops: kAXWindows plus elements by id through the private `_AXUIElementCreateWithRemoteToken` (dlsym; skipped when missing), the main window's id cached in `~/.kktcli/main-window-id.json`; windows a press opens on another desktop. |
 | `KakaoTalkInputGuard` | Checks, immediately before every posted key press or click, that KakaoTalk is frontmost (and owns the click point). |
 | `ChatWindowResolver`, `MessageContextResolver`, `KakaoTalkTranscriptReader` | Older search/keyboard based paths kept for `read --legacy-open`, `chats` refreshes and the cache command; `send`, `send-image` and `watch` open rooms like `read`. |
 | `ChatIdentityRegistryStore` | Local synthetic `chat_id` values derived from normalized names, with last seen row and preview. |
@@ -181,6 +181,15 @@ check source-level guarantees (separate data paths, no network code, MCP options
 | `~/.config/kktcli/credentials.json`, `credentials/primary.key` | Encrypted credentials and their key (owner-only permissions). |
 | `~/.kktcli/chat-registry.json` | Synthetic chat identities. |
 | `~/.kktcli/ax-cache.json` | Cached AX paths for the legacy paths. |
+| `~/.kktcli/main-window-id.json` | The main window's element id for the running KakaoTalk process. |
+
+These files are shared by concurrent kktcli processes (a long `watch`, the MCP server, a
+`read` run next to them). Every change takes an exclusive `flock` on a sibling `.lock` file,
+re-reads the file, applies the change to that fresh copy and replaces the file atomically (a
+0600 temp file renamed over it); readers take a shared lock, and the in-process copy is only
+a read cache checked against the file's inode, size and modification time (`SharedFile`,
+`ChatIdentityRegistryFile`). A registry scan that changed nothing but timestamps writes
+nothing, so a polling `watch --all` does not rewrite the file every few seconds.
 | `~/.kktcli/messages/<chat_id>.jsonl` | Messages kept from reads (plain text; `read --no-save`, `kktcli store clear`). |
 
 kktcli is a fork of [kmsg](https://github.com/channprj/kmsg) and deliberately uses

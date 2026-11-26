@@ -239,7 +239,7 @@ in this order, and never bring KakaoTalk to the front unless you allow it:
 2. Another desktop or Space: the window is looked up by its Accessibility element id
    (the technique window switchers such as AltTab use) and read where it is; nothing is
    pressed and your desktop does not change. `meta.main_window` is `other_desktop`. The id
-   is cached in `~/.kktcli/ax-cache.json`; without it a search takes about 2 s (at most 4 s). This uses a
+   is cached in `~/.kktcli/main-window-id.json`; without it a search takes about 2 s (at most 4 s). This uses a
    private macOS function looked up at run time; where it is missing, this step is skipped.
    `KKTCLI_NO_ELEMENT_ID_SCAN=1` turns it off.
 3. Closed (the window server shows no KakaoTalk window that could be it): KakaoTalk's own
@@ -688,6 +688,8 @@ with a single error document.
 | `~/.config/kktcli/credentials/primary.key` | Local AES-GCM key. |
 | `~/.kktcli/chat-registry.json` | Synthetic chat identities and last seen rows. |
 | `~/.kktcli/ax-cache.json` | Cached AX paths. |
+| `~/.kktcli/main-window-id.json` | The main window's Accessibility element id for the running KakaoTalk (other desktops). |
+| `~/.kktcli/*.lock` | Lock files: several kktcli processes (a `watch`, the MCP server, a `read`) can run at once; each change re-reads the file under the lock and replaces it atomically, so none overwrites another's changes. |
 | `~/.kktcli/messages/<chat_id>.jsonl` | Messages kept from reads (see [Local message store](#local-message-store)). |
 
 These files contain private data. Do not publish them or attach them to issues. kktcli

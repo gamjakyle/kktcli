@@ -115,6 +115,9 @@ Chat window (title = room name; team, self and open chats drop the "팀채팅, "
   preview + time + members, preview, elimination; identical rows get no ID and their records
   are held as a set); a lookup of one ID uses the same matching and only refreshes that
   record (`ChatIdentityRegistryStore.refresh`).
+- Files in `~/.kktcli` are shared by concurrent kktcli processes: change them only through
+  a locked re-read-and-replace (`ChatIdentityRegistryFile.update`, `SharedFile`); never
+  write back a document cached in memory.
 - Keep `read --json` output to exactly one JSON document on stdout.
 - Never put real room names, people's names or chat text in code, tests, docs or commit
   messages; use placeholders such as 홍길동 or 테스트방.
