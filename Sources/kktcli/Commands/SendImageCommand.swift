@@ -1,195 +1,242 @@
-import ArgumentParser
 import AppKit
+import ArgumentParser
 import Foundation
+import KktcliCore
 
 struct SendImageCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "send-image",
-        abstract: "Send an image to a chat"
+        abstract: "Send one image to one chat, after you confirm it in a dialog",
+        discussion: """
+            kktcli send-image <chat> <image> [--preview]
+            kktcli send-image --chat-id <chat-id> <image> [--preview]
+
+            Opens the room the way 'read' does and shows the same confirmation dialog as 'send'
+            (room, last messages, file name and size). Pasting needs KakaoTalk in front, so it is
+            brought to the front only after 보내기 was clicked. The clipboard is saved before the
+            image is put on it and restored afterwards, and the app that was in front before is
+            brought back.
+            """
     )
 
-    @Argument(help: "Name of the chat or friend to send to")
-    var recipient: String
+    @Option(name: .long, help: "Send using a chat_id from 'kktcli chats'")
+    var chatID: String?
 
-    @Argument(help: "Path to the image file")
-    var imagePath: String
+    @Argument(help: "Chat name, or the image path when --chat-id is used")
+    var firstValue: String
+
+    @Argument(help: "Path to the image file when a chat name is given")
+    var secondValue: String?
+
+    @Flag(name: .long, help: "Send nothing; show who it goes to and the file")
+    var preview: Bool = false
+
+    @Flag(name: .long, help: "Print one JSON document")
+    var json: Bool = false
+
+    @Flag(name: [.short, .long], help: "Keep the chat window open if kktcli opened it")
+    var keepWindow: Bool = false
+
+    @Option(name: .long, help: "While KakaoTalk is in front, press nothing until the keyboard and mouse were idle this many seconds")
+    var idleSeconds: Double = UserActivityPolicy.defaultIdleSeconds
+
+    @Option(name: .long, help: "Wait at most this many seconds for that (0 fails at once with KAKAOTALK_IN_USE)")
+    var waitForIdle: Double = UserActivityPolicy.defaultWaitSeconds
+
+    @Flag(name: .long, help: "Allow reopening a hidden main window (brings KakaoTalk to the front)")
+    var allowActivate: Bool = false
 
     @Flag(name: .long, help: "Show AX traversal and retry details")
     var traceAX: Bool = false
 
-    @Flag(name: .long, help: "Disable AX path cache for this run")
-    var noCache: Bool = false
+    private var imagePath: String { (chatID == nil ? secondValue : firstValue) ?? "" }
 
-    @Flag(name: [.short, .long], help: "Keep chat and list windows open after sending image")
-    var keepWindow: Bool = false
-
-    @Flag(name: .long, help: "Enable deep window recovery when fast window detection fails")
-    var deepRecovery: Bool = false
+    func validate() throws {
+        if chatID != nil, secondValue != nil {
+            throw ValidationError("A chat name cannot be given together with --chat-id.")
+        }
+        if chatID == nil, secondValue == nil {
+            throw ValidationError("The image path is required.")
+        }
+    }
 
     func run() throws {
-        guard AccessibilityPermission.ensureGranted() else {
-            AccessibilityPermission.printInstructions()
-            throw ExitCode.failure
-        }
-
-        let runner = AXActionRunner(traceEnabled: traceAX)
-        let imageURL = URL(fileURLWithPath: imagePath)
-
-        guard FileManager.default.fileExists(atPath: imagePath) else {
-            print("Error: File not found at \(imagePath)")
-            throw ExitCode.failure
-        }
-
-        let kakao = try AuthBootstrap.requireAuthenticated(traceAX: traceAX)
-        let chatWindowResolver = ChatWindowResolver(
-            kakao: kakao,
-            runner: runner,
-            useCache: !noCache,
-            deepRecoveryEnabled: deepRecovery
-        )
-
-        do {
-            print("Looking for chat with '\(recipient)'...")
-            let resolution = try chatWindowResolver.resolve(query: recipient)
-
-            try sendImageToWindow(imageURL, window: resolution.window, kakao: kakao, runner: runner)
-            closeWindowsIfNeeded(
-                resolution: resolution,
-                kakao: kakao,
-                resolver: chatWindowResolver,
-                runner: runner
-            )
-        } catch {
-            print("Failed to send image: \(error)")
-            throw ExitCode.failure
+        let report = withStdoutRedirectedToStderr(json) { perform() }
+        SendOutput.print(report, json: json)
+        if let code = SendOutput.exitCode(report) {
+            throw ExitCode(code)
         }
     }
 
-    private func sendImageToWindow(_ imageURL: URL, window: UIElement, kakao: KakaoTalkApp, runner: AXActionRunner) throws {
-        // 1. Copy image to clipboard
-        guard let image = NSImage(contentsOf: imageURL) else {
-            throw KakaoTalkError.actionFailed("Failed to load image from \(imageURL.path)")
+    private func perform() -> SendReport {
+        var report = SendReport(mode: preview ? "preview" : "send")
+        let url = URL(fileURLWithPath: (imagePath as NSString).expandingTildeInPath)
+        guard let image = NSImage(contentsOf: url) else {
+            report.error = .init(code: "INVALID_ARGUMENT", message: "Not a readable image: \(url.path)", hint: nil)
+            report.details["exit_status"] = String(KktcliExitStatus.usage)
+            return report
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let fileLabel = "\(url.lastPathComponent) (\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)))"
+        report.file = fileLabel
+
+        var session: RoomSession?
+        var opened: RoomSession.Opened?
+        do {
+            let room = try RoomSession(traceAX: traceAX, idleSeconds: idleSeconds, waitForIdle: waitForIdle, allowActivate: allowActivate)
+            session = room
+            let located = try chatID.map { try room.locate(chatID: $0) } ?? room.locate(name: firstValue)
+            let window = try room.open(located)
+            opened = window
+            let tail = room.tail(of: window.window, limit: 3, justOpened: window.openedByUs)
+            let method = "chat_list_menu + paste (KakaoTalk brought to the front after 보내기) + sheet 전송"
+            let summary = SendPreview(
+                title: located.row.title,
+                memberCount: located.row.summary.memberCount,
+                chatID: located.chatID,
+                listPreview: located.row.summary.preview,
+                listTime: located.row.summary.timeLabel,
+                lastMessages: tail.suffix(3).map(SendContextMessage.init(item:)),
+                sameNameRows: located.sameNameRows,
+                text: "[이미지] \(fileLabel)",
+                method: method
+            )
+            report.preview = summary
+            report.method = method
+            if preview {
+                report.ok = true
+                report.window = room.close(window, keep: keepWindow)
+                return report
+            }
+
+            var content = SendOutput.dialogContent(summary)
+            content.heading = "이 이미지를 \(summary.title)에 보낼까요?"
+            let outcome = SendConfirmationDialog(log: { room.runner.log($0) }).run(content)
+            guard outcome == .send else {
+                report.cancelled = true
+                report.window = room.close(window, keep: keepWindow)
+                report.error = .init(code: "SEND_CANCELLED", message: outcome == .timedOut ? "Not sent: timed out." : "Not sent: cancelled.", hint: nil)
+                return report
+            }
+            guard room.stillShows(window) else {
+                throw MessageSender.failure("SEND_TARGET_CHANGED", "The chat window closed or changed while the dialog was open; nothing was sent.")
+            }
+            let now = room.tail(of: window.window, limit: 3, justOpened: false)
+            if SendVerification.compareTail(before: tail.suffix(3).map(SendVerification.Key.init(item:)), now: now.suffix(3).map(SendVerification.Key.init(item:))) != .same {
+                throw MessageSender.failure("SEND_CONTEXT_CHANGED", "The room changed while the dialog was open; nothing was sent.", hint: "Run the preview again.")
+            }
+
+            let verified = try ImagePaster(session: room).paste(image, into: window, tailBefore: now)
+            report.ok = true
+            report.sent = true
+            report.bubbleVerified = verified
+            report.window = room.close(window, keep: keepWindow)
+            return report
+        } catch let failure as ReadFailure {
+            if let session, let opened {
+                report.window = session.close(opened, keep: keepWindow)
+            }
+            report.error = .init(code: failure.code, message: failure.message, hint: failure.hint)
+            report.details = failure.details
+            report.details["exit_status"] = String(failure.exitCode)
+            return report
+        } catch {
+            report.error = .init(code: "SEND_FAILED", message: "\(error)", hint: nil)
+            return report
+        }
+    }
+}
+
+/// Pastes an image into an open chat window and presses the confirmation sheet's 전송. The
+/// clipboard is saved first and restored afterwards; KakaoTalk is brought to the front only for
+/// the paste (Cmd-V goes through `KakaoTalkInputGuard`), then the previous app comes back.
+struct ImagePaster {
+    let session: RoomSession
+
+    func paste(_ image: NSImage, into opened: RoomSession.Opened, tailBefore: [TranscriptItem]) throws -> Bool {
+        let runner = session.runner
+        let pasteboard = NSPasteboard.general
+        let saved = Self.save(pasteboard)
+        let previous = KakaoTalkInputGuard.shared.currentEvidence().focusedApplicationPID
+            .flatMap { NSRunningApplication(processIdentifier: $0) }
+        defer {
+            Self.restore(saved, to: pasteboard)
+            runner.log("send-image: clipboard restored (\(saved.count) item(s))")
+            if let previous, previous.bundleIdentifier != KakaoTalkApp.bundleIdentifier {
+                previous.activate(options: [])
+            }
         }
 
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([image])
-
-        runner.log("Image copied to clipboard")
-
-        // 2. Activate KakaoTalk and focus window
-        kakao.activate()
-        try? window.focus()
-        Thread.sleep(forTimeInterval: 0.3)
-
-        // 3. Paste image
+        session.kakao.activate()
+        _ = AXNodeReader.perform(opened.window.axElement, kAXRaiseAction)
+        let deadline = Date().addingTimeInterval(1.5)
+        while !KakaoTalkInputGuard.shared.isKakaoTalkFrontmost(), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         guard runner.pressPaste() else {
-            let reason = KakaoTalkInputGuard.shared.lastBlockReason ?? "unverified"
-            throw KakaoTalkError.actionFailed(
-                "[NOT_FRONTMOST] KakaoTalk is not the frontmost app (\(reason)); Cmd-V was not posted and the image was not sent"
-            )
+            throw MessageSender.failure("NOT_FRONTMOST", "KakaoTalk could not be verified in front, so nothing was pasted or sent.")
         }
-        runner.log("Paste command sent")
 
-        // 4. Confirmation sheet can be transient or skipped entirely depending on KakaoTalk state.
-        if let confirmationSheet = waitForConfirmationSheet(in: window, runner: runner) {
-            runner.log("Confirmation sheet found")
-            Thread.sleep(forTimeInterval: 0.2)
-
-            guard let button = findSendButton(in: confirmationSheet) else {
-                if !waitForSendCompletion(in: window, confirmationSheet: confirmationSheet, runner: runner) {
-                    throw KakaoTalkError.elementNotFound("Send button not found on confirmation sheet")
-                }
-                runner.log("send-image: sheet vanished before button lookup; treating as success")
-                print("✓ Image sent to '\(recipient)'")
-                Thread.sleep(forTimeInterval: 0.5)
-                return
+        if let sheet = waitForSheet(in: opened.window) {
+            guard let button = AXNodeReader.firstDescendant(of: sheet, maxNodes: 200, where: {
+                SendButtonSafety.isSendButton(role: $0.snapshot.role, title: $0.snapshot.title, description: $0.snapshot.desc)
+            })?.element else {
+                _ = AXNodeReader.perform(sheet, kAXCancelAction)
+                throw MessageSender.failure("SEND_BUTTON_UNAVAILABLE", "The image sheet has no 전송 button; it was cancelled and nothing was sent.")
             }
-
-            if !runner.clickWithRetry(button, label: "send button"),
-               !waitForSendCompletion(in: window, confirmationSheet: confirmationSheet, runner: runner)
-            {
-                throw KakaoTalkError.actionFailed("Failed to click send button after retries")
-            }
+            let status = AXNodeReader.perform(button, kAXPressAction)
+            runner.log("send-image: pressed the sheet's 전송 status=\(status.rawValue)")
         } else {
-            runner.log("send-image: confirmation sheet not observed; allowing direct-send path")
-            Thread.sleep(forTimeInterval: 0.7)
+            runner.log("send-image: no confirmation sheet appeared after the paste")
         }
 
-        print("✓ Image sent to '\(recipient)'")
-
-        // Give it a moment to finish sending
-        Thread.sleep(forTimeInterval: 0.5)
-    }
-
-    private func closeWindowsIfNeeded(
-        resolution: ChatWindowResolution,
-        kakao: KakaoTalkApp,
-        resolver: ChatWindowResolver,
-        runner: AXActionRunner
-    ) {
-        guard !keepWindow else {
-            runner.log("send-image: keep-window enabled; skipping auto-close")
-            return
-        }
-
-        if resolver.closeWindow(resolution.window) {
-            print("✓ Chat window closed.")
-        } else {
-            runner.log("send-image: close window could not be verified")
-        }
-
-        if let listWindow = kakao.chatListWindow,
-           !areSameAXElement(listWindow, resolution.window)
-        {
-            if resolver.closeWindow(listWindow) {
-                runner.log("send-image: chat list window closed")
-            } else {
-                runner.log("send-image: chat list window could not be verified")
+        let verifyDeadline = Date().addingTimeInterval(4.0)
+        repeat {
+            Thread.sleep(forTimeInterval: 0.3)
+            if SendVerification.imageSent(before: tailBefore, after: session.tail(of: opened.window, limit: 6, justOpened: false)) {
+                return true
             }
+        } while Date() < verifyDeadline
+        throw MessageSender.failure(
+            "SEND_UNVERIFIED",
+            "No new outgoing image bubble was found. Check the room before doing anything else, and do not send it again.",
+            details: ["probably_sent": "unknown"]
+        )
+    }
+
+    private func waitForSheet(in window: UIElement) -> AXUIElement? {
+        let deadline = Date().addingTimeInterval(2.0)
+        repeat {
+            if let sheet = AXNodeReader.children(window.axElement).first(where: { AXNodeReader.read($0).snapshot.role == "AXSheet" }) {
+                return sheet
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        return nil
+    }
+
+    /// Every item and type on the pasteboard, as data.
+    static func save(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        (pasteboard.pasteboardItems ?? []).map { item in
+            var types: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) { types[type] = data }
+            }
+            return types
         }
     }
 
-    private func waitForConfirmationSheet(in window: UIElement, runner: AXActionRunner) -> UIElement? {
-        var sheet: UIElement?
-        _ = runner.waitUntil(label: "confirmation sheet", timeout: 1.5, pollInterval: 0.1) {
-            sheet = locateConfirmationSheet(in: window)
-            return sheet != nil
+    static func restore(_ saved: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        let items = saved.map { types -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in types { item.setData(data, forType: type) }
+            return item
         }
-        return sheet
-    }
-
-    private func locateConfirmationSheet(in window: UIElement) -> UIElement? {
-        if let found = window.attributeOptional(kAXSheetsAttribute).flatMap({ (elements: [AXUIElement]) in elements.first }) {
-            return UIElement(found)
+        if !items.isEmpty {
+            pasteboard.writeObjects(items)
         }
-        return window.findFirst(where: { $0.role == kAXSheetRole })
-    }
-
-    private func findSendButton(in confirmationSheet: UIElement) -> UIElement? {
-        confirmationSheet.findAll(role: kAXButtonRole).first { button in
-            let title = (button.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return title == "전송" || title == "Send"
-        }
-    }
-
-    private func waitForSendCompletion(
-        in window: UIElement,
-        confirmationSheet: UIElement,
-        runner: AXActionRunner
-    ) -> Bool {
-        runner.waitUntil(label: "send-image completion", timeout: 1.5, pollInterval: 0.1) {
-            locateConfirmationSheet(in: window) == nil || !windowContainsElement(window, target: confirmationSheet)
-        }
-    }
-
-    private func windowContainsElement(_ window: UIElement, target: UIElement) -> Bool {
-        window.findFirst(where: { candidate in
-            areSameAXElement(candidate, target)
-        }) != nil
-    }
-
-    private func areSameAXElement(_ lhs: UIElement, _ rhs: UIElement) -> Bool {
-        CFEqual(lhs.axElement, rhs.axElement)
     }
 }

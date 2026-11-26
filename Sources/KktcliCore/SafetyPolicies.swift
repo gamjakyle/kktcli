@@ -64,6 +64,20 @@ public enum FrontmostPolicy {
     }
 }
 
+/// The chat window's own "전송" (send) button, next to "전송 메뉴". It is the only press
+/// exempt from the "전송" denylist below, and `send` presses it once, after the user
+/// confirmed the exact text in the confirmation dialog and the input was verified.
+public enum SendButtonSafety {
+    public static let title = "전송"
+
+    public static func isSendButton(role: String, title: String?, description: String?) -> Bool {
+        guard role == AXRoleName.button else { return false }
+        let title = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = (description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == Self.title || (title.isEmpty && description == Self.title)
+    }
+}
+
 /// Context-menu items that must never be pressed, whatever the caller asked for.
 /// Mirrors `refuseIfBlocked` from the reference tool.
 public enum MenuItemSafety {
