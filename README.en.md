@@ -119,8 +119,8 @@ kktcli details:
 - `chats`: 6.8 s for 182 rows, titles and unread flags 182/182 correct.
 - Scrollback: 200 messages with dates in 17 s.
 - Recovery: a visible search was restored (취소, then 검색); a closed main window was
-  reopened through **카카오톡 열기** (this brings KakaoTalk to the front, so it is now pressed
-  only when KakaoTalk is already in front or with `--allow-activate`); a missing
+  reopened through **카카오톡 열기** (since 0.2.0 kktcli uses the Window › 채팅 menu item, which
+  leaves KakaoTalk in the background, and presses 카카오톡 열기 only with `--allow-activate`); a missing
   room returns `CHAT_NOT_IN_LIST`; bad arguments return JSON with exit status 64. The
   hidden-filter state (no search field, filtered list) could not be reproduced live and
   is **unverified**.
@@ -143,12 +143,27 @@ Additional measurements (2026-11-25, same Mac and account):
 - 19 rows that open a list of 1:1 open-chat conversations: all reported `OPEN_CHAT_LIST`
   (12 opened, checked and closed; the 7 with zero conversations were not opened). These 19
   plus 2 ordinary rooms took 36 s in one batch run.
-- Working in another full-screen Space: `chats` and `read` stopped with
-  `MAIN_WINDOW_NOT_VISIBLE` in 0.7 s, pressed nothing and left the frontmost app alone. With
-  another app in front on the same desktop, `read` succeeded in 2.3 s and the frontmost app
-  stayed in front.
-- The in-use guard (`KAKAOTALK_IN_USE`) is covered by unit tests only; it has not been
-  checked live yet.
+- Working in another full-screen Space (0.1.x): `chats` and `read` stopped with
+  `MAIN_WINDOW_NOT_VISIBLE` in 0.7 s, pressed nothing and left the frontmost app alone.
+  0.2.0 reads in this case too (below). With another app in front on the same desktop,
+  `read` succeeded in 2.3 s and the frontmost app stayed in front.
+
+0.2.0 measurements (2026-11-26, same Mac and account):
+
+- KakaoTalk's main window on another desktop, another app in front: `chats` 184 rows in
+  4.5 s, `read` 2.7 s, `send --preview` 3.8 s. The frontmost app and the desktop stayed.
+- 50 unread rooms in one `--all-history` batch: 9 min, 2,849 messages from 49 rooms (the
+  other one is an open-chat conversation list). In 45 rooms the unread badge was gone
+  afterwards, confirming that opening marks them read. 42 stopped at the end of the history
+  kept on this Mac (`stalled`); the earliest date was 2026-11-01.
+- Main window closed: `chats` opened it with the Window › 채팅 menu item and read the list in
+  4.1 s; KakaoTalk did not come to the front.
+- In-use guard: with KakaoTalk in front and simulated input arriving, `read` stopped with
+  `KAKAOTALK_IN_USE` (75) after 5.7 s and opened no window.
+- Concurrency: running `chats` and `read --chat-id` while `watch --all` was polling kept all
+  176 chat_ids, and the reads reached the right rooms.
+- Not verified: `watch --all` new-message events (no message arrived during the test) and
+  real sends (`send`, `send-image`; off by default).
 
 Caveats: one Mac, one account, n=20 rooms. The reference read used for accuracy was
 produced by an Accessibility reader, the same data source as kktcli, which may favor
