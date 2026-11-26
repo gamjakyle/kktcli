@@ -148,6 +148,21 @@ kktcli.
 - Accessibility permission for the `kktcli` binary you run
 - Swift 6 or later to build (Xcode or the Command Line Tools)
 
+## Install
+
+On an Apple silicon (arm64) Mac, one line downloads the release binary from GitHub, checks
+its SHA-256 and installs it as `~/.local/bin/kktcli`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
+```
+
+To build from source instead, run `./install.sh --from-source` in a clone of this
+repository; from a clone the script also builds from source on Intel Macs or when the
+download fails. Then add the installed binary under **System Settings → Privacy & Security
+→ Accessibility**, turn it on and check with `kktcli status`. An updated or rebuilt binary
+may need to be added again.
+
 ## Build and install from source
 
 ```bash

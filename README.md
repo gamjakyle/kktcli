@@ -141,6 +141,20 @@ API로 읽어 만든 것이라 kktcli와 데이터 출처가 같으므로, kktcl
 - 실행하는 `kktcli` 바이너리에 손쉬운 사용 권한
 - 소스 빌드용 Swift 6 이상(Xcode 또는 Command Line Tools)
 
+## 설치
+
+Apple Silicon(arm64) Mac에서는 아래 한 줄로 설치합니다. GitHub 릴리스에서 바이너리를 받아
+SHA-256을 확인한 뒤 `~/.local/bin/kktcli`에 넣습니다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
+```
+
+소스에서 빌드하려면 저장소를 클론한 폴더에서 `./install.sh --from-source`를 실행하세요.
+클론한 폴더에서는 Intel Mac이거나 다운로드가 실패해도 소스 빌드로 넘어갑니다. 설치한 뒤
+**시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용**에서 설치된 바이너리를 추가해 켜고
+`kktcli status`로 확인하세요. 업데이트하거나 다시 빌드한 바이너리는 다시 추가해야 할 수 있습니다.
+
 ## 소스에서 빌드·설치
 
 ```bash
