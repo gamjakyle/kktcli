@@ -345,7 +345,7 @@ private final class KktcliMCPServer {
                         "allow_activate": [
                             "type": "boolean",
                             "default": false,
-                            "description": "Allow bringing KakaoTalk to the front when its main window is not visible (closed, minimised, or on another desktop or full-screen Space); may switch the user's desktop. Without it such reads fail with MAIN_WINDOW_NOT_VISIBLE.",
+                            "description": "Allow bringing KakaoTalk to the front (카카오톡 열기) when its main window cannot be found on any desktop or opened with 창 > 채팅; may switch the user's desktop. Without it such reads fail with MAIN_WINDOW_NOT_VISIBLE.",
                         ],
                         "include_system": [
                             "type": "boolean",

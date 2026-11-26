@@ -39,15 +39,17 @@ final class RoomSession {
         let runner = AXActionRunner(traceEnabled: traceAX)
         let activity = UserActivityGuard(idleSeconds: idleSeconds, waitBudget: waitForIdle, runner: runner)
         let access = MainWindowAccess(runner: runner, activity: activity, allowActivate: allowActivate)
+        // Before the login check, which would activate KakaoTalk when kAXWindows lists no main
+        // window; skipped when the main window was found on another desktop (logged in).
+        var earlyAction: ChatListLocator.MainWindowAction?
         if KakaoTalkApp.isRunning, let early = try? KakaoTalkApp(autoLaunch: false) {
-            let earlyLocator = ChatListLocator(kakao: early, runner: runner)
-            if earlyLocator.mainWindow() == nil, case .pressed = try access.reopen(kakao: early, locator: earlyLocator) {
-                _ = earlyLocator.waitForMainWindow(timeout: 3.0)
-            }
+            earlyAction = try access.resolve(locator: ChatListLocator(kakao: early, runner: runner), allowOpenCommand: false).action
         }
         let kakao: KakaoTalkApp
         do {
-            kakao = try AuthBootstrap.requireAuthenticated(traceAX: traceAX)
+            kakao = earlyAction == .otherDesktop
+                ? try KakaoTalkApp(autoLaunch: false)
+                : try AuthBootstrap.requireAuthenticated(traceAX: traceAX)
         } catch {
             throw ReadFailure(code: "KAKAO_UNAVAILABLE", message: "\(error)")
         }
@@ -169,6 +171,20 @@ final class RoomSession {
         guard !keep else { return "kept_open" }
         let outcome = ChatWindowCloser(kakao: kakao, runner: runner).close(opened.window, expectedTitle: nil)
         return outcome == .closed ? "closed" : "left_open (\(outcome.code))"
+    }
+
+    /// A real send only goes to a room window on the current desktop (listed in kAXWindows).
+    /// A window that opened on another desktop (the main window is there) can be previewed but
+    /// is not typed into or pressed: untested, so nothing is sent.
+    func requireOnThisDesktop(_ opened: Opened) throws {
+        guard kakao.windows.contains(where: { CFEqual($0.axElement, opened.window.axElement) }) else {
+            throw ReadFailure(
+                code: "SEND_TARGET_UNCERTAIN",
+                message: "The room's window opened on another desktop or Space, where kktcli does not send; nothing was sent.",
+                hint: "Show KakaoTalk on this desktop and retry.",
+                exitCode: KktcliExitStatus.sendUnverified
+            )
+        }
     }
 
     /// The window is still there (same element) and shows the same room.

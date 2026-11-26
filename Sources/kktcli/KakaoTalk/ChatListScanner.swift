@@ -95,7 +95,15 @@ struct ChatListScanner {
             trace?("chats: chat list container unavailable")
             return []
         }
+        return scan(container: container, limit: limit, trace: trace)
+    }
 
+    /// The rows of a chat-list table already verified by `ChatListLocator.verifiedAccess`.
+    func scan(table: AXUIElement, limit: Int, trace: ((String) -> Void)? = nil) -> [ChatListSnapshotItem] {
+        scan(container: UIElement(table), limit: limit, trace: trace)
+    }
+
+    private func scan(container: UIElement, limit: Int, trace: ((String) -> Void)?) -> [ChatListSnapshotItem] {
         let rows = collectChatItems(from: container, limit: limit)
         guard !rows.isEmpty else {
             trace?("chats: chat list container found but no rows/items resolved")
@@ -147,10 +155,8 @@ struct ChatListScanner {
         }
 
         trace?("chats: container fast path miss, scanning")
-        let tables = window.findAll(role: kAXTableRole, limit: 1, maxNodes: 220)
-        let outlines = window.findAll(role: kAXOutlineRole, limit: 1, maxNodes: 220)
-        let lists = window.findAll(role: kAXListRole, limit: 1, maxNodes: 220)
-        let container = tables.first ?? outlines.first ?? lists.first
+        // Only an AXTable can be the chat list; the 친구 tab's AXOutline never is.
+        let container = window.findAll(role: kAXTableRole, limit: 1, maxNodes: 220).first
 
         if let container {
             AXPathCacheStore.shared.remember(slot: .chatListContainer, root: window, element: container, trace: trace)
@@ -160,12 +166,7 @@ struct ChatListScanner {
     }
 
     private func isLikelyChatListContainer(_ element: UIElement) -> Bool {
-        switch element.role {
-        case kAXTableRole, kAXOutlineRole, kAXListRole:
-            return true
-        default:
-            return false
-        }
+        MainWindowLayout.isChatListContainer(role: element.role ?? "")
     }
 
     private func collectChatItems(from container: UIElement, limit: Int) -> [UIElement] {

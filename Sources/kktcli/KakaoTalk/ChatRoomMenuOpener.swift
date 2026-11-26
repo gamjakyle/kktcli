@@ -80,7 +80,11 @@ struct ChatRoomMenuOpener {
         AXNodeReader.setMessagingTimeout(cell, seconds: Self.menuMessagingTimeout)
 
         try ReadInterruption.check("before showing the context menu")
-        let windowsBefore = kakao.windows.map(\.axElement)
+        // With the main window on another desktop, the room may open there too: windows are
+        // then also looked for by element id (`KakaoWindowLookup`).
+        let lookup = KakaoWindowLookup(kakao: kakao, runner: runner)
+        let offDesktop = !lookup.isListed(access.window)
+        let windowsBefore = lookup.reachableWindows(offDesktop: offDesktop, scanIDs: offDesktop).map(\.axElement)
         let showStatus = AXNodeReader.perform(cell, "AXShowMenu")
         runner.log("read: AXShowMenu status=\(showStatus.rawValue)")
 
@@ -135,7 +139,7 @@ struct ChatRoomMenuOpener {
         let pressStatus = AXNodeReader.perform(item.element, kAXPressAction)
         runner.log("read: pressed \(MenuItemSafety.openChatRoomIdentifier) status=\(pressStatus.rawValue)")
 
-        let opened = waitForChatWindow(title: row.title, windowsBefore: windowsBefore)
+        let opened = waitForChatWindow(title: row.title, windowsBefore: windowsBefore, offDesktop: offDesktop)
         if let window = opened.window {
             return OpenedRoom(window: window, unreadBefore: unreadBefore, windowTitleEmpty: opened.untitled, isNewWindow: opened.isNew)
         }
@@ -143,7 +147,7 @@ struct ChatRoomMenuOpener {
         if menuIsOpen(on: cell) {
             cancel(menu)
         }
-        var details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore)
+        var details = closeWindowsOpenedByThePress(windowsBefore: windowsBefore, offDesktop: offDesktop)
         if let list = opened.openChatList {
             details["opened"] = "true"
             throw Self.openChatListFailure(row: row, list: list, rowCount: opened.listRowCount, details: details)
@@ -175,8 +179,8 @@ struct ChatRoomMenuOpener {
     }
 
     /// Windows that exist now but did not before the press (never the main window).
-    private func newWindows(since windowsBefore: [AXUIElement]) -> [UIElement] {
-        kakao.windows.filter { window in
+    private func newWindows(since windowsBefore: [AXUIElement], offDesktop: Bool) -> [UIElement] {
+        KakaoWindowLookup(kakao: kakao, runner: runner).reachableWindows(offDesktop: offDesktop, scanIDs: offDesktop).filter { window in
             window.identifier != ChatListLocator.mainWindowIdentifier
                 && !windowsBefore.contains { CFEqual($0, window.axElement) }
         }
@@ -185,8 +189,8 @@ struct ChatRoomMenuOpener {
     /// No window was accepted as the room. Every window that appeared after the press was
     /// opened by it, so each is closed with its own close button (titles are not checked:
     /// they may be empty). Returns the details for the error document.
-    private func closeWindowsOpenedByThePress(windowsBefore: [AXUIElement]) -> [String: String] {
-        let windows = newWindows(since: windowsBefore)
+    private func closeWindowsOpenedByThePress(windowsBefore: [AXUIElement], offDesktop: Bool) -> [String: String] {
+        let windows = newWindows(since: windowsBefore, offDesktop: offDesktop)
         guard !windows.isEmpty else { return [:] }
         // Labels first: a closed window can no longer be read.
         let labels = windows.map { OpenedWindowRule.label($0.title) }
@@ -426,13 +430,20 @@ struct ChatRoomMenuOpener {
     private func waitForChatWindow(
         title: String,
         windowsBefore: [AXUIElement],
+        offDesktop: Bool,
         timeout: TimeInterval = 3.0
     ) -> WaitResult {
         let locator = ChatListLocator(kakao: kakao, runner: runner)
+        let lookup = KakaoWindowLookup(kakao: kakao, runner: runner)
         let deadline = Date().addingTimeInterval(timeout)
+        var poll = 0
 
         repeat {
-            let windows = kakao.windows.filter { $0.identifier != ChatListLocator.mainWindowIdentifier }
+            // Off-desktop windows by id only every 8th poll (about 0.2 s each).
+            let scanIDs = offDesktop && poll % 8 == 7
+            poll += 1
+            let windows = lookup.reachableWindows(offDesktop: offDesktop, scanIDs: scanIDs)
+                .filter { $0.identifier != ChatListLocator.mainWindowIdentifier }
             var candidates = windows.map { window in
                 OpenedWindowCandidate(
                     title: window.title,

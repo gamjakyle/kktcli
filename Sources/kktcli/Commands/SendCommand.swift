@@ -53,7 +53,7 @@ struct SendCommand: ParsableCommand {
     @Option(name: .long, help: "Wait at most this many seconds for that (0 fails at once with KAKAOTALK_IN_USE)")
     var waitForIdle: Double = UserActivityPolicy.defaultWaitSeconds
 
-    @Flag(name: .long, help: "Allow bringing KakaoTalk to the front: to reopen a hidden main window, and for the Enter fallback when the 전송 button is unavailable")
+    @Flag(name: .long, help: "Allow bringing KakaoTalk to the front: 카카오톡 열기 when the main window cannot be found or opened otherwise, and the Enter fallback when the 전송 button is unavailable")
     var allowActivate: Bool = false
 
     @Flag(name: .long, help: "Show AX traversal and retry details")
@@ -132,6 +132,7 @@ struct SendCommand: ParsableCommand {
                 return report
             }
 
+            try room.requireOnThisDesktop(window)
             let now = room.tail(of: window.window, limit: 3, justOpened: false)
             let sent = try MessageSender(session: room, allowActivate: allowActivate).send(text, in: window, tailBefore: now)
             report.ok = true

@@ -49,13 +49,6 @@ struct UserActivityPolicyTests {
         #expect(UserActivityPolicy.kakaoTalkMayBeFrontmost(FrontmostEvidence(kakaoPID: kakao, focusedApplicationPID: nil, kakaoReportsFrontmost: nil)))
     }
 
-    @Test("A main window that is not visible is reopened only in front or with --allow-activate")
-    func mainWindowPolicy() {
-        #expect(MainWindowPolicy.decide(kakaoTalkFrontmost: true, allowActivate: false) == .reopen)
-        #expect(MainWindowPolicy.decide(kakaoTalkFrontmost: false, allowActivate: true) == .reopen)
-        #expect(MainWindowPolicy.decide(kakaoTalkFrontmost: false, allowActivate: false) == .refuse)
-    }
-
     @Test("Window-server counts: KakaoTalk's layer-0 windows, total and off screen")
     func windowCounts() {
         let entries = [

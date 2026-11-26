@@ -91,7 +91,10 @@ struct FullTextFetcher {
         defer { restore(scroll) }
 
         let application = kakao.applicationElement.axElement
-        let windowsBefore = kakao.windows.map(\.axElement)
+        // A chat window on another desktop may get its 전체보기 window there too.
+        let lookup = KakaoWindowLookup(kakao: kakao, runner: runner)
+        let offDesktop = !lookup.isListed(UIElement(parts.window))
+        let windowsBefore = lookup.reachableWindows(offDesktop: offDesktop, scanIDs: offDesktop).map(\.axElement)
         let overlaysBefore = overlays(of: parts.window) + overlays(of: application)
 
         // Re-verified right before the press: the same cut text and the same control.
@@ -110,8 +113,11 @@ struct FullTextFetcher {
 
         // Not cut short by an interruption: whatever the press opens must be closed again.
         let deadline = Date().addingTimeInterval(Self.openTimeout)
+        var poll = 0
         repeat {
-            let newWindows = kakao.windows.filter { window in
+            let scanIDs = offDesktop && poll % 8 == 7
+            poll += 1
+            let newWindows = lookup.reachableWindows(offDesktop: offDesktop, scanIDs: scanIDs).filter { window in
                 window.identifier != ChatListLocator.mainWindowIdentifier
                     && !windowsBefore.contains { CFEqual($0, window.axElement) }
             }

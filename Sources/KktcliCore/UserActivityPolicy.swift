@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A press that opens or brings up a KakaoTalk window, which may become the key window and
@@ -17,6 +18,9 @@ public enum UserActivityPress: String, Sendable {
     case legacyOpen
     /// KakaoTalk's 창 menu item 채팅 (⌘2), to show the chat tab in the main window.
     case switchToChatTab
+    /// The same 창 > 채팅 item when the main window is closed: it opens the main window on the
+    /// current desktop without activating KakaoTalk (live 2026-11-26), like 채팅방 열기.
+    case reopenViaWindowMenu
 
     /// The press activates KakaoTalk itself, so it needs an idle user even when another app is
     /// in front.
@@ -100,31 +104,20 @@ public struct WindowServerEntry: Equatable, Sendable {
     public var ownerPID: Int32
     public var layer: Int
     public var isOnscreen: Bool
+    /// `kCGWindowBounds` (global, top-left origin, like Accessibility frames).
+    public var frame: CGRect?
 
-    public init(ownerPID: Int32, layer: Int, isOnscreen: Bool) {
+    public init(ownerPID: Int32, layer: Int, isOnscreen: Bool, frame: CGRect? = nil) {
         self.ownerPID = ownerPID
         self.layer = layer
         self.isOnscreen = isOnscreen
+        self.frame = frame
     }
 }
 
-/// What to do when KakaoTalk's main window is not visible through Accessibility.
-///
-/// That happens when it is closed or minimised, and also when it sits on another desktop or
-/// full-screen Space: Accessibility then reports no KakaoTalk windows at all, while the window
-/// server still lists them as off screen. 카카오톡 열기 activates KakaoTalk and may switch the
-/// user's desktop, so it is pressed only when KakaoTalk is already frontmost (no app switch)
-/// or the caller allowed activation.
+/// Window-server facts about KakaoTalk's windows, for MAIN_WINDOW_NOT_VISIBLE details. What is
+/// done about a main window kAXWindows does not list is `MainWindowLookup`.
 public enum MainWindowPolicy {
-    public enum Decision: Equatable, Sendable {
-        case reopen
-        case refuse
-    }
-
-    public static func decide(kakaoTalkFrontmost: Bool, allowActivate: Bool) -> Decision {
-        kakaoTalkFrontmost || allowActivate ? .reopen : .refuse
-    }
-
     /// KakaoTalk's normal-level (layer 0) windows: all of them, and those not on screen. The
     /// counts cannot tell a closed-but-retained window from one on another Space.
     public static func windowCounts(_ entries: [WindowServerEntry], kakaoPID: Int32) -> (total: Int, offscreen: Int) {

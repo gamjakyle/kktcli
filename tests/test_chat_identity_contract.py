@@ -64,15 +64,40 @@ class ChatListVerificationContractTests(unittest.TestCase):
         self.assertIn("try locator.verifiedAccess(in: mainWindow, activity: activity).access", read(SESSION))
         watch = read(WATCH)
         self.assertIn('output.status("not_chat_tab"', watch)
-        self.assertIn("frontmost: FrontmostPolicy.keyboard(evidence).allowed", watch)
+        self.assertIn("locator.verify(candidate, in: main)", watch)
         self.assertNotIn("frontmost: false", watch)
+        # The frontmost state reported with main_window_not_visible is the real one.
+        access = read(SOURCES / "kktcli" / "KakaoTalk" / "MainWindowAccess.swift")
+        self.assertIn('"kakao_frontmost": String(FrontmostPolicy.keyboard(evidence).allowed)', access)
 
     def test_the_tab_switch_presses_only_the_chat_menu_item(self) -> None:
         locator = read(LOCATOR)
-        body = locator[locator.index("func pressChatTabMenuItem("):locator.index("func verifiedAccess(")]
+        body = locator[locator.index("func pressChatTabMenuItem("):locator.index("func pressChatroomsButton(")]
         self.assertIn("ChatTabMenu.isChatTabItem(role: node.role, title: node.title, commandCharacter: commandCharacter)", body)
         self.assertIn("guard isItem(item), beforePress() else {", body)
         self.assertEqual(body.count("AXNodeReader.perform("), 1)
         for forbidden in ('"친구"', '"더보기"', "kAXMenuItemCmdCharAttribute, ", "CGEvent", "pressKey"):
             self.assertNotIn(forbidden, body)
         self.assertIn("try activity.waitUntilClear(.switchToChatTab)", locator)
+        # Second choice, only when the menu item is unavailable: the chatrooms tab button.
+        button = locator[locator.index("func pressChatroomsButton("):locator.index("func verifiedAccess(")]
+        self.assertIn("MainWindowLayout.isChatroomsButton(role: node.role, identifier: node.identifier)", button)
+        self.assertIn("guard isButton(button), beforePress() else {", button)
+        self.assertEqual(button.count("AXNodeReader.perform("), 1)
+        for forbidden in ('"friends"', '"more"', "CGEvent", "pressKey"):
+            self.assertNotIn(forbidden, button)
+        verified = locator[locator.index("func verifiedAccess("):locator.index("static func notChatList(")]
+        self.assertLess(verified.index("pressChatTabMenuItem(beforePress:"), verified.index("if press == .unavailable {"))
+        self.assertLess(verified.index("if press == .unavailable {"), verified.index("pressChatroomsButton(in: mainWindow"))
+
+    def test_only_a_table_can_be_the_chat_list(self) -> None:
+        locator = read(LOCATOR)
+        self.assertIn("MainWindowLayout.isChatListContainer(role: $0.snapshot.role)", locator)
+        self.assertIn("ChatListCheck.verify(containerRole: role, tab: tab, summaries:", locator)
+        scanner = read(SOURCES / "kktcli" / "KakaoTalk" / "ChatListScanner.swift")
+        self.assertNotIn("kAXOutlineRole", scanner)
+        self.assertIn("MainWindowLayout.isChatListContainer(role: element.role", scanner)
+        chats = read(CHATS)
+        self.assertIn("ChatListScanner().scan(table: verified.access.table", chats)
+        self.assertNotIn("chatListWindow", chats)
+        self.assertNotIn("ensureMainWindow", chats)

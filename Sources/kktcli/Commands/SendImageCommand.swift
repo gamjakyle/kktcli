@@ -120,6 +120,7 @@ struct SendImageCommand: ParsableCommand {
                 return report
             }
 
+            try room.requireOnThisDesktop(window)
             guard room.stillShows(window) else {
                 throw MessageSender.failure("SEND_TARGET_CHANGED", "The chat window closed or changed; nothing was sent.")
             }

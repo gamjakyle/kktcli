@@ -9,6 +9,10 @@ public enum ChatListVerification: Equatable, Sendable {
     case empty
     /// The main window shows no table at all.
     case noTable
+    /// The window shows another tab (the 친구 tab's outline), whatever its rows look like.
+    case otherTab(MainWindowTab)
+    /// The list is not an AXTable (e.g. the 친구 tab's AXOutline).
+    case wrongContainer(role: String)
 
     public var isChatList: Bool { self == .chatList }
 }
@@ -28,6 +32,19 @@ public enum ChatListCheck {
 
     public static func isChatListRow(_ summary: ChatRowSummary) -> Bool {
         summary.titleSource == .titleLabel && (hasText(summary.timeLabel) || hasText(summary.preview))
+    }
+
+    /// The container role and the tab come first: only an AXTable on a window that does not
+    /// show the 친구 tab can be the chat list; then the rows decide (`verify(_:)`).
+    public static func verify(containerRole: String?, tab: MainWindowTab, summaries: [ChatRowSummary]) -> ChatListVerification {
+        if tab == .friends {
+            return .otherTab(.friends)
+        }
+        guard let containerRole else { return .noTable }
+        guard MainWindowLayout.isChatListContainer(role: containerRole) else {
+            return .wrongContainer(role: containerRole)
+        }
+        return verify(summaries)
     }
 
     public static func verify(_ summaries: [ChatRowSummary]) -> ChatListVerification {
@@ -80,7 +97,7 @@ public enum ChatTabMenu {
         switch verification {
         case .chatList, .empty:
             return .useTable
-        case .notChatList, .noTable:
+        case .notChatList, .noTable, .otherTab, .wrongContainer:
             return mayPress && !alreadySwitched ? .switchTab : .notChatTab
         }
     }

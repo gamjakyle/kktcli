@@ -23,8 +23,8 @@ class KktcliIsolationContractTests(unittest.TestCase):
 
     def test_state_lives_in_kktcli_directories(self) -> None:
         source = swift_sources()
-        # ~/.kktcli for the chat registry and AX path cache.
-        self.assertEqual(source.count('.appendingPathComponent(".kktcli", isDirectory: true)'), 2)
+        # ~/.kktcli for the chat registry, the AX path cache and the element-id cache.
+        self.assertEqual(source.count('.appendingPathComponent(".kktcli", isDirectory: true)'), 3)
         # ~/.config/kktcli for credentials.
         self.assertIn('.appendingPathComponent("kktcli", isDirectory: true)', source)
         for forbidden in ('".kmsg"', 'appendingPathComponent("kmsg"', "KMSG_"):

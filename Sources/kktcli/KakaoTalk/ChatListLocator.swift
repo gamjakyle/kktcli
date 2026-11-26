@@ -85,8 +85,27 @@ struct ChatListLocator {
             .window
     }
 
+    var windowLookup: KakaoWindowLookup {
+        KakaoWindowLookup(kakao: kakao, runner: runner)
+    }
+
+    /// The main window: from kAXWindows (this desktop), else the one found by element id on
+    /// another desktop earlier (or cached for this KakaoTalk process). Never scans; the full
+    /// lookup, which may scan and press, is `MainWindowAccess.resolve`.
     func mainWindow() -> UIElement? {
-        mainWindow(among: kakao.windows)
+        mainWindow(among: kakao.windows) ?? windowLookup.knownOffDesktopMainWindow()?.element
+    }
+
+    /// Read-only lookup: `mainWindow()`, the patient re-check, then the element-id scan. Never
+    /// presses (for `watch --all`). `offDesktop` is true when kAXWindows does not list it.
+    func findMainWindow(scan: Bool) -> (window: UIElement, offDesktop: Bool)? {
+        if let main = mainWindow() ?? confirmMainWindow() {
+            return (main, !windowLookup.isListed(main))
+        }
+        guard scan, KakaoWindowLookup.scanAvailable, let found = windowLookup.scanForMainWindow().mainWindow else {
+            return nil
+        }
+        return (found.element, true)
     }
 
     private func mainWindow(among windows: [UIElement]) -> UIElement? {
@@ -162,54 +181,30 @@ struct ChatListLocator {
         return nil
     }
 
-    /// Returns the main window, reopening it once (`open KakaoTalk.app`, as the legacy
-    /// recovery did) when the app runs without one.
+    /// What kktcli did to get the main window, for `meta.main_window` (several are joined
+    /// with "," in the order they happened, e.g. "other_desktop,switched_to_chat_tab").
     enum MainWindowAction: String {
+        /// Found by element id on another desktop or Space; nothing pressed.
+        case otherDesktop = "other_desktop"
+        /// A closed main window opened with 창 > 채팅 (no activation).
+        case openedViaWindowMenu = "opened_via_window_menu"
         case openedViaMenuItem = "opened_via_menu_item"
         case openedViaOpenCommand = "opened_via_open_command"
         case switchedToChatTab = "switched_to_chat_tab"
+
+        static func report(_ actions: [MainWindowAction?]) -> String? {
+            var values: [String] = []
+            for value in actions.compactMap({ $0?.rawValue }) where !values.contains(value) {
+                values.append(value)
+            }
+            return values.isEmpty ? nil : values.joined(separator: ",")
+        }
     }
 
-    /// Returns the main window. A missing one is brought back by pressing KakaoTalk's
-    /// "카카오톡 열기" menu item (`showFirstWindow:`) only as `access` allows (KakaoTalk already
-    /// frontmost, or --allow-activate; idle user); `open KakaoTalk.app`, which activates
-    /// KakaoTalk, is only used as a last resort when `allowOpenCommand` (--deep-recovery).
+    /// The main window, wherever it is (`MainWindowAccess.resolve`); `open KakaoTalk.app`,
+    /// which activates KakaoTalk, only as a last resort with `allowOpenCommand` (--deep-recovery).
     func requireMainWindow(allowOpenCommand: Bool, access: MainWindowAccess) throws -> (window: UIElement, action: MainWindowAction?) {
-        if let main = mainWindow() {
-            return (main, nil)
-        }
-        let pressed: Bool
-        switch try access.reopen(kakao: kakao, locator: self) {
-        case .alreadyVisible(let main):
-            return (main, nil)
-        case .pressed:
-            if let main = waitForMainWindow(timeout: 3.0) {
-                return (main, .openedViaMenuItem)
-            }
-            pressed = true
-        case .unavailable:
-            pressed = false
-        }
-        guard allowOpenCommand else {
-            throw ReadFailure(
-                code: "WINDOW_NOT_READY",
-                message: pressed
-                    ? "[WINDOW_NOT_READY] KakaoTalk's main window did not appear after pressing \(MainWindowMenuItem.title)."
-                    : "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) is not open and the \(MainWindowMenuItem.title) menu item was unavailable.",
-                hint: "Open KakaoTalk's main window on the 채팅 tab and retry, or pass --deep-recovery to reopen it with open KakaoTalk.app (activates KakaoTalk)."
-            )
-        }
-
-        runner.log("read: main window still missing; reopening it via open KakaoTalk.app")
-        try access.forceOpen()
-        if let main = waitForMainWindow(timeout: 3.0) {
-            return (main, .openedViaOpenCommand)
-        }
-        throw ReadFailure(
-            code: "WINDOW_NOT_READY",
-            message: "[WINDOW_NOT_READY] KakaoTalk's main window (chat list) did not appear.",
-            hint: "Open KakaoTalk's main window on the 채팅 tab and retry."
-        )
+        try access.resolve(locator: self, allowOpenCommand: allowOpenCommand)
     }
 
     enum MainWindowPress {
@@ -267,12 +262,14 @@ struct ChatListLocator {
 
     // MARK: Chat list verification and the 채팅 tab
 
-    /// The first rows of the table, summarised, and what they say about the table.
-    func verify(_ access: ChatListAccess?) -> ChatListVerification {
-        guard let access else { return .noTable }
-        let rows = AXNodeReader.rows(of: access.table).prefix(ChatListCheck.sampleSize)
-        let verification = ChatListCheck.verify(rows.map { ChatListScanner.summarize(row: $0) })
-        runner.log("chat list: verification \(verification)")
+    /// What the main window's tab, the table's role and its first rows say about the table
+    /// (`ChatListCheck.verify(containerRole:tab:summaries:)`). Reads only.
+    func verify(_ access: ChatListAccess?, in window: UIElement) -> ChatListVerification {
+        let tab = MainWindowLayout.classifyTab(AXNodeReader.flatten(window.axElement, maxDepth: 4, budget: 300))
+        let role = access.map { AXNodeReader.read($0.table).snapshot.role }
+        let rows = access.map { Array(AXNodeReader.rows(of: $0.table).prefix(ChatListCheck.sampleSize)) } ?? []
+        let verification = ChatListCheck.verify(containerRole: role, tab: tab, summaries: rows.map { ChatListScanner.summarize(row: $0) })
+        runner.log("chat list: tab \(tab.rawValue), verification \(verification)")
         return verification
     }
 
@@ -315,13 +312,37 @@ struct ChatListLocator {
         return .unavailable
     }
 
+    /// Second choice to switch tabs, only when the 창 menu item is unavailable (untested live):
+    /// the main window's top-level "chatrooms" tab button and nothing else, re-verified right
+    /// before the AXPress together with `beforePress`.
+    func pressChatroomsButton(in mainWindow: UIElement, beforePress: () -> Bool) -> ChatTabPress {
+        func isButton(_ element: AXUIElement) -> Bool {
+            let node = AXNodeReader.read(element).snapshot
+            return MainWindowLayout.isChatroomsButton(role: node.role, identifier: node.identifier)
+        }
+        guard let button = AXNodeReader.firstDescendant(of: mainWindow.axElement, maxNodes: 300, where: {
+            MainWindowLayout.isChatroomsButton(role: $0.snapshot.role, identifier: $0.snapshot.identifier)
+        })?.element else {
+            runner.log("chat tab: no \(MainWindowLayout.chatroomsButtonIdentifier) button either")
+            return .unavailable
+        }
+        AXNodeReader.setMessagingTimeout(button, seconds: 2.0)
+        guard isButton(button), beforePress() else {
+            return .deferred
+        }
+        let status = AXNodeReader.perform(button, kAXPressAction)
+        runner.log("chat tab: pressed the \(MainWindowLayout.chatroomsButtonIdentifier) button status=\(status.rawValue)")
+        return status == .success || status == .cannotComplete ? .pressed : .unavailable
+    }
+
     /// The main window's chat list, verified (`ChatListCheck`). When the window shows another
     /// tab and `activity` is given, KakaoTalk's 창 > 채팅 is pressed once (after the
-    /// user-activity guard) and the chat table is awaited for up to 2 s. Throws
-    /// CHAT_LIST_UNAVAILABLE (nothing read, nothing written) when it stays unverified.
+    /// user-activity guard; the "chatrooms" tab button only when that menu item is unavailable)
+    /// and the chat table is awaited for up to 2 s. Throws CHAT_LIST_UNAVAILABLE (nothing read,
+    /// nothing written) when it stays unverified.
     func verifiedAccess(in mainWindow: UIElement, activity: UserActivityGuard?) throws -> (access: ChatListAccess, switched: Bool, verified: Bool) {
         var access = self.access(in: mainWindow) ?? self.access(in: mainWindow, patience: Self.mainWindowRecheckDuration)
-        var verification = verify(access)
+        var verification = verify(access, in: mainWindow)
         var switched = false
         while true {
             switch ChatTabMenu.decide(verification, mayPress: activity != nil, alreadySwitched: switched) {
@@ -339,13 +360,20 @@ struct ChatListLocator {
                     try activity.waitUntilClear(.switchToChatTab)
                     press = pressChatTabMenuItem(beforePress: { activity.mayPressNow(.switchToChatTab) })
                 }
+                if press == .unavailable {
+                    press = .deferred
+                    while press == .deferred {
+                        try activity.waitUntilClear(.switchToChatTab)
+                        press = pressChatroomsButton(in: mainWindow, beforePress: { activity.mayPressNow(.switchToChatTab) })
+                    }
+                }
                 switched = true
                 guard press == .pressed else { throw Self.notChatList(verification, switched: false) }
                 let deadline = Date().addingTimeInterval(2.0)
                 repeat {
                     Thread.sleep(forTimeInterval: 0.2)
                     access = self.access(in: mainWindow)
-                    verification = verify(access)
+                    verification = verify(access, in: mainWindow)
                 } while !verification.isChatList && Date() < deadline && !ReadInterruption.requested
             }
         }
@@ -359,7 +387,7 @@ struct ChatListLocator {
             message: switched
                 ? "KakaoTalk's main window still does not show the chat list after 창 > 채팅 was pressed; nothing was read or recorded."
                 : "KakaoTalk's main window does not show the chat list (another tab, e.g. 친구); nothing was read or recorded.",
-            hint: "Switch KakaoTalk's main window to the 채팅 tab (⌘2) and retry.",
+            hint: "Switch KakaoTalk's main window to the 채팅 tab (⌘2) and retry (or unlock KakaoTalk if it is locked).",
             details: details
         )
     }
@@ -402,8 +430,9 @@ struct ChatListLocator {
     // MARK: Chat list
 
     func access(in window: UIElement) -> ChatListAccess? {
+        // Only an AXTable can be the chat list (the 친구 tab's list is an AXOutline).
         guard let table = AXNodeReader.firstDescendant(of: window.axElement, maxNodes: 300, where: {
-            $0.snapshot.role == AXRoleName.table
+            MainWindowLayout.isChatListContainer(role: $0.snapshot.role)
         }) else {
             return nil
         }

@@ -27,8 +27,10 @@ class WatchCommandContractTests(unittest.TestCase):
     def test_all_mode_reads_the_list_without_clicking_or_scrolling(self) -> None:
         source = read(WATCH)
         body = source[source.index("private func watchList("):source.index("/// Opens one changed room")]
-        for forbidden in ("perform(", "setNumber(", "pressShowMainWindowMenuItem", "reopen(", "AuthBootstrap"):
+        for forbidden in ("perform(", "setNumber(", "pressShowMainWindowMenuItem", "pressChatTabMenuItem", "reopen(", "resolve(", "verifiedAccess(", "AuthBootstrap"):
             self.assertNotIn(forbidden, body)
+        self.assertIn("locator.findMainWindow(scan: scanNow)", body)
+        self.assertIn('output.status("main_window", details: ["location": location])', body)
         self.assertIn("KakaoTalkApp(autoLaunch: false)", body)
         self.assertIn('output.status("main_window_not_visible"', body)
         self.assertIn("WatchDiff.chatListChanges(previous: previous, current: current, knownChatIDs: known)", body)

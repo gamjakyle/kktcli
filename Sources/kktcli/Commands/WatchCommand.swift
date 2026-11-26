@@ -14,10 +14,11 @@ struct WatchCommand: ParsableCommand {
 
             --all never scrolls or clicks: every --poll-interval seconds (3) it reads the top
             --top rows and prints one JSON line per change: chat_id, title, preview, time,
-            unread and change (new_message, unread_changed, new_room). If KakaoTalk's main
-            window is not visible it prints a status line and keeps polling. --read also opens
-            each changed room (activity guard; read receipts are sent as when opening it by
-            hand), prints its new messages and keeps them in the local store.
+            unread and change (new_message, unread_changed, new_room). The main window is read
+            also on another desktop or Space (status "main_window", location "other_desktop");
+            a closed one is not opened: it prints a status line and keeps polling. --read also
+            opens each changed room (activity guard; read receipts are sent as when opening it
+            by hand), prints its new messages and keeps them in the local store.
 
             Stops after --duration seconds, after --count events, or on Ctrl-C. A window kktcli
             opened is closed again (unless --keep-window).
@@ -63,7 +64,7 @@ struct WatchCommand: ParsableCommand {
     @Option(name: .long, help: "Wait at most this many seconds for that (0 fails at once with KAKAOTALK_IN_USE)")
     var waitForIdle: Double = UserActivityPolicy.defaultWaitSeconds
 
-    @Flag(name: .long, help: "Allow bringing KakaoTalk to the front to reopen a hidden main window (one chat only)")
+    @Flag(name: .long, help: "Allow bringing KakaoTalk to the front (카카오톡 열기) when its main window cannot be found or opened otherwise (one chat only)")
     var allowActivate: Bool = false
 
     @Flag(name: .long, help: "Show AX traversal and retry details")
@@ -162,23 +163,37 @@ struct WatchCommand: ParsableCommand {
         var events = 0
         output.status("watching", details: ["rows": String(top)])
 
+        var lastScan: Date?
+        var lastLocation: String?
         while !ReadInterruption.requested {
             if let deadline, Date() >= deadline { break }
-            guard let main = locator.mainWindow() ?? locator.confirmMainWindow() else {
+            // Read-only lookup: this desktop, then (at most every 15 s while missing) the
+            // element-id scan for another desktop. watch --all never presses, so a closed main
+            // window is reported, not opened.
+            let scanNow = lastScan.map { Date().timeIntervalSince($0) >= 15 } ?? true
+            guard let found = locator.findMainWindow(scan: scanNow) else {
+                if scanNow { lastScan = Date() }
                 if lastStatus != "main_window_not_visible" {
-                    let evidence = KakaoTalkInputGuard.shared.currentEvidence()
                     let failure = MainWindowAccess(runner: runner, activity: activity, allowActivate: false)
-                        .notVisible(kakao: kakao, kakaoPID: evidence.kakaoPID, frontmost: FrontmostPolicy.keyboard(evidence).allowed)
+                        .notVisible(kakao: kakao)
                     output.status("main_window_not_visible", details: failure.details)
                     lastStatus = "main_window_not_visible"
                 }
                 Thread.sleep(forTimeInterval: pollInterval ?? 3.0)
                 continue
             }
+            let main = found.window
+            let location = found.offDesktop ? "other_desktop" : "this_desktop"
+            if location != lastLocation {
+                if found.offDesktop || lastLocation != nil {
+                    output.status("main_window", details: ["location": location])
+                }
+                lastLocation = location
+            }
             // The main window is there; is it showing the chat list? Another tab (e.g. 친구) or no
             // table is reported as such. watch --all never clicks, so it does not switch tabs.
             let candidate = locator.access(in: main) ?? locator.access(in: main, patience: ChatListLocator.mainWindowRecheckDuration)
-            let verification = locator.verify(candidate)
+            let verification = locator.verify(candidate, in: main)
             guard let access = candidate, verification.isChatList || verification == .empty else {
                 if lastStatus != "not_chat_tab" {
                     output.status("not_chat_tab", details: [

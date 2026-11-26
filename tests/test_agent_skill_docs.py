@@ -98,7 +98,7 @@ class ProjectDocumentationTests(unittest.TestCase):
         for text in (
             "**The chat list is checked first.**",
             "`switched_to_chat_tab`",
-            "never 친구 or 더보기",
+            "never presses 친구 or 더보기",
             "`not_chat_tab`",
             "| `--all-history` |",
             '"history": {',

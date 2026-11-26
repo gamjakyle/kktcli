@@ -30,8 +30,10 @@ struct ChatWindowCloser {
             return .closeButtonMissing
         }
 
+        let lookup = KakaoWindowLookup(kakao: kakao, runner: runner)
+        let wasListed = lookup.isListed(window)
         let status = AXNodeReader.perform(closeButton, kAXPressAction)
-        if waitForWindowClosed(window) {
+        if waitForWindowClosed(window, lookup: lookup, wasListed: wasListed) {
             return .closed
         }
         if status != .success {
@@ -41,9 +43,11 @@ struct ChatWindowCloser {
         return .stillOpen
     }
 
-    private func waitForWindowClosed(_ window: UIElement) -> Bool {
+    /// Gone from kAXWindows; a window on another desktop (never listed there) is gone when its
+    /// element stops answering.
+    private func waitForWindowClosed(_ window: UIElement, lookup: KakaoWindowLookup, wasListed: Bool) -> Bool {
         runner.waitUntil(label: "close via AXCloseButton", timeout: 0.9, pollInterval: 0.06, evaluateAfterTimeout: false) {
-            !kakao.windows.contains { CFEqual($0.axElement, window.axElement) }
+            !lookup.exists(window, wasListed: wasListed)
         }
     }
 }

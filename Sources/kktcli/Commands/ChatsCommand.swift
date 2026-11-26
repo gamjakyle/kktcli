@@ -13,13 +13,17 @@ struct ChatsCommand: ParsableCommand {
         commandName: "chats",
         abstract: "List chat rooms",
         discussion: """
-            Reads the chat list of KakaoTalk's main window with Accessibility reads only.
+            Reads the chat list of KakaoTalk's main window with Accessibility reads
+            only, after checking that it is the chat list (another tab is switched
+            with 창 > 채팅, ⌘2).
 
-            If the main window is not visible (closed, minimised, or on another desktop or
-            full-screen Space) and KakaoTalk is not in front, it is not reopened, because that
-            would bring KakaoTalk to the front and may switch the user's desktop:
-            MAIN_WINDOW_NOT_VISIBLE, unless --allow-activate is given. Reopening waits while
-            the user is busy (KAKAOTALK_IN_USE after --wait-for-idle seconds, exit status 75).
+            The main window is found wherever it is: on another desktop or Space it
+            is read in place (looked up by element id; nothing is pressed). A closed
+            main window is opened with KakaoTalk's 창 > 채팅 menu item, which does not
+            bring KakaoTalk to the front. 카카오톡 열기, which does, is used only with
+            --allow-activate; otherwise MAIN_WINDOW_NOT_VISIBLE. Presses wait while
+            the user is busy (KAKAOTALK_IN_USE after --wait-for-idle seconds, exit
+            status 75).
             """
     )
 
@@ -35,7 +39,7 @@ struct ChatsCommand: ParsableCommand {
     @Flag(name: .long, help: "Output in JSON format")
     var json: Bool = false
 
-    @Flag(name: [.short, .long], help: "Keep auto-opened chat window after chats")
+    @Flag(name: [.short, .long], help: "No effect (kept for compatibility); a main window opened with 창 > 채팅 is left open")
     var keepWindow: Bool = false
 
     @Option(name: .long, help: "While KakaoTalk is in front, press nothing until the keyboard and mouse were idle this many seconds")
@@ -46,7 +50,7 @@ struct ChatsCommand: ParsableCommand {
 
     @Flag(
         name: .long,
-        help: "Allow bringing KakaoTalk to the front (카카오톡 열기) when its main window is not visible; may switch desktops"
+        help: "Allow bringing KakaoTalk to the front (카카오톡 열기) when its main window cannot be found or opened otherwise; may switch desktops"
     )
     var allowActivate: Bool = false
 
@@ -97,65 +101,30 @@ struct ChatsCommand: ParsableCommand {
         let activity = UserActivityGuard(idleSeconds: idleSeconds, waitBudget: waitForIdle, runner: runner)
         let mainWindowAccess = MainWindowAccess(runner: runner, activity: activity, allowActivate: allowActivate)
 
-        // A main window that Accessibility does not show is dealt with before the login check,
-        // which would otherwise activate KakaoTalk: "카카오톡 열기" only when that switches no
-        // app or desktop (KakaoTalk in front) or --allow-activate, else MAIN_WINDOW_NOT_VISIBLE.
+        // The main window is looked for before the login check, which would otherwise activate
+        // KakaoTalk or run `open KakaoTalk.app` when kAXWindows lists none (`MainWindowAccess`:
+        // another desktop by element id, 창 > 채팅 for a closed one, 카카오톡 열기 only with
+        // --allow-activate, else MAIN_WINDOW_NOT_VISIBLE). Found on another desktop, KakaoTalk
+        // is logged in and the login check (which would activate it) is skipped.
+        var earlyAction: ChatListLocator.MainWindowAction?
         if KakaoTalkApp.isRunning, let early = try? KakaoTalkApp(autoLaunch: false) {
-            let earlyLocator = ChatListLocator(kakao: early, runner: runner)
-            if earlyLocator.mainWindow() == nil,
-               case .pressed = try mainWindowAccess.reopen(kakao: early, locator: earlyLocator),
-               earlyLocator.waitForMainWindow(timeout: 3.0) != nil
-            {
-                FileHandle.standardError.write(Data("Note: KakaoTalk's main window was reopened (\(MainWindowMenuItem.title)).\n".utf8))
-            }
+            earlyAction = try mainWindowAccess.resolve(locator: ChatListLocator(kakao: early, runner: runner), allowOpenCommand: false).action
         }
+        let kakao = earlyAction == .otherDesktop
+            ? try KakaoTalkApp(autoLaunch: false)
+            : try AuthBootstrap.requireAuthenticated(traceAX: traceAX)
 
-        let kakao = try AuthBootstrap.requireAuthenticated(traceAX: traceAX)
-        let chatWindowResolver = ChatWindowResolver(kakao: kakao, runner: runner)
-        let windowsBefore = kakao.windows
-
-        // Prefer the chat list window ("카카오톡") over any conversation window
-        let mainWindow: UIElement
-        let autoOpenedWindow: Bool
-        if let chatListWindow = kakao.chatListWindow {
-            mainWindow = chatListWindow
-            autoOpenedWindow = false
-            runner.log("chats: using chatListWindow title='\(chatListWindow.title ?? "")'")
-        } else if let fallback = try activatingFallback(kakao: kakao, access: mainWindowAccess, runner: runner) {
-            mainWindow = fallback
-            autoOpenedWindow = !windowsBefore.contains(where: { existing in
-                CFEqual(existing.axElement, fallback.axElement)
-            })
-            runner.log("chats: fallback to ensureMainWindow")
-        } else {
-            throw ReadFailure(
-                code: "WINDOW_NOT_READY",
-                message: "Could not find a usable KakaoTalk window.",
-                hint: "Open KakaoTalk's main window on the 채팅 tab and retry."
-            )
-        }
-
-        defer {
-            if autoOpenedWindow && keepWindow {
-                runner.log("chats: keep-window enabled; auto-opened window will be kept")
-            } else if autoOpenedWindow {
-                if chatWindowResolver.closeWindow(mainWindow) {
-                    runner.log("chats: auto-opened window closed")
-                } else {
-                    runner.log("chats: failed to close auto-opened window")
-                }
-            }
-        }
-
-        runner.log("chats: usable window ready")
+        let locator = ChatListLocator(kakao: kakao, runner: runner)
+        let (mainWindow, action) = try locator.requireMainWindow(allowOpenCommand: false, access: mainWindowAccess)
         // Only the verified chat list is read and recorded: another tab (e.g. 친구) is switched
         // away from with 창 > 채팅, or nothing is written and CHAT_LIST_UNAVAILABLE is reported.
-        let locator = ChatListLocator(kakao: kakao, runner: runner)
-        if try locator.verifiedAccess(in: mainWindow, activity: activity).switched {
-            FileHandle.standardError.write(Data("Note: KakaoTalk's main window was switched to the 채팅 tab.\n".utf8))
+        let verified = try locator.verifiedAccess(in: mainWindow, activity: activity)
+        let actions = [earlyAction, action, verified.switched ? .switchedToChatTab : nil]
+        if let report = ChatListLocator.MainWindowAction.report(actions) {
+            FileHandle.standardError.write(Data("Note: KakaoTalk's main window: \(report).\n".utf8))
         }
-        let scanner = ChatListScanner()
-        let snapshots = scanner.scan(in: mainWindow, limit: limit, trace: { message in
+        runner.log("chats: verified chat list ready")
+        let snapshots = ChatListScanner().scan(table: verified.access.table, limit: limit, trace: { message in
             runner.log(message)
         })
         let verification = ChatListCheck.verify(snapshots.compactMap(\.summary))
@@ -185,24 +154,6 @@ struct ChatsCommand: ParsableCommand {
                 unreadCount: snapshot.discovery.unread.count
             )
         }
-    }
-
-    /// The old fallback (activate, relaunch, `open KakaoTalk.app`) brings KakaoTalk to the
-    /// front, so it runs only as `MainWindowPolicy` allows and after the user-activity wait.
-    private func activatingFallback(kakao: KakaoTalkApp, access: MainWindowAccess, runner: AXActionRunner) throws -> UIElement? {
-        // A transient read failure must not lead to activating KakaoTalk.
-        if let main = ChatListLocator(kakao: kakao, runner: runner).confirmMainWindow() {
-            return main
-        }
-        let evidence = KakaoTalkInputGuard.shared.currentEvidence()
-        let frontmost = FrontmostPolicy.keyboard(evidence).allowed
-        guard MainWindowPolicy.decide(kakaoTalkFrontmost: frontmost, allowActivate: allowActivate) == .reopen else {
-            throw access.notVisible(kakao: kakao, kakaoPID: evidence.kakaoPID, frontmost: frontmost)
-        }
-        try access.activity.waitUntilClear(.showMainWindow)
-        return kakao.ensureMainWindow(timeout: 5.0, trace: { message in
-            runner.log(message)
-        })
     }
 
     private func printText(_ chats: [ChatListEntry]) {

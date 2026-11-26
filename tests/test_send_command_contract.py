@@ -21,7 +21,8 @@ class SendCommandContractTests(unittest.TestCase):
         command = read(SEND_COMMAND) + read(SEND_IMAGE)
         session = read(SESSION)
         self.assertIn("ChatRoomMenuOpener(kakao: kakao, runner: runner, activity: activity)", session)
-        self.assertIn("try access.reopen(kakao: early, locator: earlyLocator)", session)
+        self.assertIn("try access.resolve(locator: ChatListLocator(kakao: early, runner: runner), allowOpenCommand: false)", session)
+        self.assertIn("earlyAction == .otherDesktop", session)
         self.assertIn("try room.locate(chatID: $0)", command)
         for forbidden in ("ChatWindowResolver(", "typeTextDirect", "typeTextWithVerification", "forcedTyping", "pressEnterKey"):
             self.assertNotIn(forbidden, command)

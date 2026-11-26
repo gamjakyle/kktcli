@@ -47,10 +47,15 @@ struct ReadCommand: ParsableCommand {
             While KakaoTalk is in front and the keyboard or mouse was used less than
             --idle-seconds ago, nothing that opens or brings up a KakaoTalk window is pressed: a
             window opened then would take the user's typing. kktcli waits up to --wait-for-idle
-            seconds and then fails with KAKAOTALK_IN_USE (exit status 75). If KakaoTalk's main
-            window is not visible (closed, minimised, or on another desktop or full-screen Space)
-            and KakaoTalk is not in front, it is not reopened, because that would switch the
-            user's desktop: MAIN_WINDOW_NOT_VISIBLE, unless --allow-activate is given.
+            seconds and then fails with KAKAOTALK_IN_USE (exit status 75).
+
+            KakaoTalk's main window is used wherever it is. On another desktop or
+            Space it is read in place (found by element id; meta.main_window
+            "other_desktop"). A closed main window is opened with KakaoTalk's
+            창 > 채팅 menu item, which does not bring KakaoTalk to the front
+            ("opened_via_window_menu"). 카카오톡 열기, which does and may switch
+            desktops, is used only with --allow-activate; otherwise
+            MAIN_WINDOW_NOT_VISIBLE.
 
             When author is "(me)", the message was sent by you; author is null when the sender
             could not be established (system lines, banners). date comes from the transcript's
@@ -175,7 +180,7 @@ struct ReadCommand: ParsableCommand {
 
     @Flag(
         name: .long,
-        help: "Allow bringing KakaoTalk to the front (카카오톡 열기) when its main window is not visible; may switch desktops"
+        help: "Allow bringing KakaoTalk to the front (카카오톡 열기) when its main window cannot be found or opened otherwise; may switch desktops"
     )
     var allowActivate: Bool = false
 
@@ -265,7 +270,8 @@ struct ReadCommand: ParsableCommand {
         /// The row the room was opened from, read again after reading for `unread_after`.
         var listRow: LocatedChatRow? = nil
         var listRecovery: ChatListRecoveryReport? = nil
-        var mainWindowAction: ChatListLocator.MainWindowAction? = nil
+        /// How the main window was found or changed while opening this room.
+        var mainWindowActions: [ChatListLocator.MainWindowAction] = []
         /// The window KakaoTalk opened has no title (open chats); `expectedTitle` is then the
         /// row title without its room-type prefix and is not checked when closing.
         var windowTitleEmpty = false
@@ -410,24 +416,19 @@ struct ReadCommand: ParsableCommand {
         let activity = UserActivityGuard(idleSeconds: idleSeconds, waitBudget: waitForIdle, runner: runner)
         let mainWindowAccess = MainWindowAccess(runner: runner, activity: activity, allowActivate: allowActivate)
 
-        // A main window that Accessibility does not show is dealt with before the login check,
-        // which would otherwise activate KakaoTalk or run `open KakaoTalk.app`. It is reopened
-        // with "카카오톡 열기" only when that switches no app or desktop (KakaoTalk in front)
-        // or --allow-activate; otherwise MAIN_WINDOW_NOT_VISIBLE and nothing is pressed.
+        // The main window is looked for before the login check, which would otherwise activate
+        // KakaoTalk or run `open KakaoTalk.app` when kAXWindows lists none (`MainWindowAccess`:
+        // another desktop by element id, 창 > 채팅 for a closed one, 카카오톡 열기 only with
+        // --allow-activate, else MAIN_WINDOW_NOT_VISIBLE). A main window found on another
+        // desktop shows KakaoTalk is logged in, and the login check would activate it: skipped.
         var mainWindowAction: ChatListLocator.MainWindowAction?
         if !backgroundSafe, KakaoTalkApp.isRunning, let early = try? KakaoTalkApp(autoLaunch: false) {
-            let earlyLocator = ChatListLocator(kakao: early, runner: runner)
-            if earlyLocator.mainWindow() == nil,
-               case .pressed = try mainWindowAccess.reopen(kakao: early, locator: earlyLocator),
-               earlyLocator.waitForMainWindow(timeout: 3.0) != nil
-            {
-                mainWindowAction = .openedViaMenuItem
-            }
+            mainWindowAction = try mainWindowAccess.resolve(locator: ChatListLocator(kakao: early, runner: runner), allowOpenCommand: false).action
         }
 
         let kakao: KakaoTalkApp
         do {
-            kakao = backgroundSafe
+            kakao = backgroundSafe || mainWindowAction == .otherDesktop
                 ? try KakaoTalkApp(autoLaunch: false)
                 : try AuthBootstrap.requireAuthenticated(traceAX: traceAX)
         } catch {
@@ -464,7 +465,7 @@ struct ReadCommand: ParsableCommand {
         let kakao = session.kakao
         let chatWindowResolver = session.resolver
         let locator = session.locator
-        var mainWindowAction = session.mainWindowAction
+        var mainWindowActions = session.mainWindowAction.map { [$0] } ?? []
         let fetchedAt = Date()
         // Waiting for the user does not count against the automatic time budgets.
         func budgetAnchor() -> Date {
@@ -474,12 +475,12 @@ struct ReadCommand: ParsableCommand {
         do {
             opened = try open(target, session: session)
         } catch let failure as ReadFailure {
-            if let mainWindowAction {
-                throw failure.adding(["main_window": mainWindowAction.rawValue])
+            if let report = ChatListLocator.MainWindowAction.report(mainWindowActions) {
+                throw failure.adding(["main_window": report])
             }
             throw failure
         }
-        mainWindowAction = opened.mainWindowAction ?? mainWindowAction
+        mainWindowActions += opened.mainWindowActions
         runner.log("read: chat window via \(opened.method.rawValue) title='\(opened.window.title ?? "")'")
 
         let chatTitle = OpenedWindowRule.isUntitled(opened.window.title) ? opened.expectedTitle : (opened.window.title ?? opened.expectedTitle)
@@ -532,7 +533,7 @@ struct ReadCommand: ParsableCommand {
             windowDetail: windowDetail,
             windowTitleEmpty: opened.windowTitleEmpty,
             listRecovery: opened.listRecovery,
-            mainWindow: mainWindowAction?.rawValue,
+            mainWindow: ChatListLocator.MainWindowAction.report(mainWindowActions),
             waitedForUserMs: Int((session.activity.totalWaited - waitedBefore) * 1000),
             store: keep(result.items, target: target, title: opened.rowTitle ?? chatTitle)
         )
@@ -632,7 +633,7 @@ struct ReadCommand: ParsableCommand {
         } catch let failure as ReadFailure {
             throw reopened.map { failure.adding(["main_window": $0.rawValue]) } ?? failure
         }
-        let mainWindowAction = verified.switched ? ChatListLocator.MainWindowAction.switchedToChatTab : reopened
+        let mainWindowActions = [reopened, verified.switched ? .switchedToChatTab : nil].compactMap { $0 }
         var access: ChatListAccess? = verified.access
         var listRecovery: ChatListRecoveryReport?
 
@@ -656,7 +657,7 @@ struct ReadCommand: ParsableCommand {
         func withRecoveryDetails(_ failure: ReadFailure) -> ReadFailure {
             var extra: [String: String] = [:]
             if let listRecovery { extra["list_recovery"] = listRecovery.summary }
-            if let mainWindowAction { extra["main_window"] = mainWindowAction.rawValue }
+            if let report = ChatListLocator.MainWindowAction.report(mainWindowActions) { extra["main_window"] = report }
             return failure.adding(extra)
         }
 
@@ -741,7 +742,7 @@ struct ReadCommand: ParsableCommand {
             var existingChat = existing(window)
             existingChat.rowTitle = row.title
             existingChat.listRecovery = listRecovery
-            existingChat.mainWindowAction = mainWindowAction
+            existingChat.mainWindowActions = mainWindowActions
             return existingChat
         }
         resolver.applyLayoutIfRequested(window, label: "opened chat window")
@@ -754,7 +755,7 @@ struct ReadCommand: ParsableCommand {
             rowTitle: row.title,
             listRow: row,
             listRecovery: listRecovery,
-            mainWindowAction: mainWindowAction,
+            mainWindowActions: mainWindowActions,
             windowTitleEmpty: openedRoom.windowTitleEmpty
         )
     }
