@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Installs kktcli for the current macOS user.
 #
+#   curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
 #   ./install.sh --from-source        # in a checkout: build it and install the result
 #
 # On Apple silicon it downloads kktcli-<version>-macos-arm64.tar.gz and its .sha256 from the
-# GitHub release v<version> and installs the binary only after `shasum -a 256 -c` passes.
+# GitHub release v<version> (the latest release unless a version is given) and installs the
+# binary only after `shasum -a 256 -c` passes.
 # On other Macs, after a failed download, or with --from-source it builds the checkout it is
 # run from with `swift build -c release`. It writes only the install directory and a
 # temporary directory that is removed on exit (a source build also fills the checkout's
@@ -20,6 +22,7 @@ set -eu
 set -o pipefail
 
 REPO_URL="https://github.com/gamjakyle/kktcli"
+LATEST_URL="$REPO_URL/releases/latest"
 ACCESSIBILITY_SETTINGS="x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 
 usage() {
@@ -29,7 +32,7 @@ Usage: install.sh [--version X.Y.Z] [--from-source] [--prefix DIR] [--dry-run]
 Installs kktcli as DIR/kktcli.
 
   --version X.Y.Z  release to install (default: $KKTCLI_VERSION, else the VERSION file
-                   of the checkout this script is in)
+                   of the checkout this script is in, else the latest release)
   --from-source    build this checkout with `swift build -c release` instead of
                    downloading a release
   --prefix DIR     install directory, created if missing (default: $HOME/.local/bin)
@@ -161,6 +164,18 @@ explain_clone() {
   say "  ./install.sh --from-source"
 }
 
+# The latest release's version, from where $LATEST_URL redirects (.../releases/tag/vX.Y.Z);
+# no API call and no JSON. Returns 1 when there is none or it is not a release version.
+latest_version() {
+  local effective tag
+  effective=$(curl -fsSIL -o /dev/null -w '%{url_effective}' "$LATEST_URL") || return 1
+  tag=${effective##*/releases/tag/}
+  [ "$tag" != "$effective" ] || return 1
+  tag=${tag#v}
+  is_release_version "$tag" || return 1
+  printf '%s\n' "$tag"
+}
+
 # Accepts only one "<sha256>  <tarball>" line, as `shasum -a 256` writes it, so that the check
 # covers this tarball; `shasum -a 256 -c` then compares the digest.
 verify_checksum() {
@@ -261,6 +276,11 @@ dry_run_report() {
   local name="kktcli-$version-macos-arm64.tar.gz"
   local url="$REPO_URL/releases/download/v$version"
   say "Dry run: nothing is downloaded, built or written."
+  if [ "$method" = download ] && [ -z "$version" ]; then
+    say "Would look up the latest release at $LATEST_URL"
+    name="kktcli-<latest>-macos-arm64.tar.gz"
+    url="$REPO_URL/releases/download/v<latest>"
+  fi
   if [ "$method" = download ]; then
     say "Would download $url/$name"
     say "           and $url/$name.sha256"
@@ -303,10 +323,8 @@ main() {
   elif [ "$arch" != arm64 ]; then
     say "Release binaries are built for Apple silicon (arm64) only; this Mac reports $arch."
     method=source
-  elif [ -n "$version" ]; then
-    method=download
   else
-    die "no version to install: pass --version X.Y.Z (see $REPO_URL/releases) or set KKTCLI_VERSION"
+    method=download
   fi
   if [ "$method" = source ] && [ -z "$src_dir" ]; then
     explain_clone
@@ -316,6 +334,11 @@ main() {
   if [ "$dry_run" = 1 ]; then
     dry_run_report
     return 0
+  fi
+  if [ "$method" = download ] && [ -z "$version" ]; then
+    version=$(latest_version) ||
+      die "could not find the latest release at $LATEST_URL: pass --version X.Y.Z (see $REPO_URL/releases) or set KKTCLI_VERSION"
+    say "Latest release: $version"
   fi
 
   tmp_root=${TMPDIR:-/tmp}

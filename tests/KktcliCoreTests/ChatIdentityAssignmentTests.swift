@@ -62,13 +62,15 @@ struct ChatIdentityAssignmentTests {
         #expect(single.rowIDs == ["chat_a"])
     }
 
-    @Test("Identical previews are not a unique match")
+    @Test("Identical rows and records: no row gets an ID, the IDs are kept as a set, nothing retired")
     func duplicatePreviews() {
         let records = [record("chat_a", "ㅇㅇ"), record("chat_b", "ㅇㅇ")]
         let rows = [row("ㅇㅇ", at: 0), row("ㅇㅇ", at: 1)]
         let result = ChatIdentityAssignment.assign(rows: rows, records: records)
-        #expect(result.retiredRecords == [0, 1])
-        #expect(!result.rowIDs.contains("chat_a") && !result.rowIDs.contains("chat_b"))
+        #expect(result.retiredRecords.isEmpty)
+        #expect(result.rowIDs == ["", ""])
+        #expect(result.heldRecords.map(\.record) == [0, 1])
+        #expect(ChatIdentityAssignment.resolve(chatID: "chat_a", rows: rows, records: records) == .ambiguous)
     }
 
     @Test("Records not seen in a partial scan stay; nothing is retired without leftover rows")

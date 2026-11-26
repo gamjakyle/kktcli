@@ -217,7 +217,9 @@ struct WatchCommand: ParsableCommand {
             }.filter { !$0.title.isEmpty }
             let known = registry.activeChatIDs()
             let ids = registry.assignChatIDs(for: located.map(ChatListLocator.discovery))
-            let current = zip(located, ids).map { row, id in
+            // A row identical in every feature to another same-name row has no chat_id of its
+            // own ("") and cannot be followed between polls: it is not watched.
+            let current = zip(located, ids).filter { !$0.1.isEmpty }.map { row, id in
                 ChatListEntrySnapshot(
                     chatID: id,
                     title: row.title,
@@ -227,7 +229,7 @@ struct WatchCommand: ParsableCommand {
                     hasUnread: row.summary.unread.isUnread
                 )
             }
-            let rowsByID = Dictionary(zip(ids, located), uniquingKeysWith: { first, _ in first })
+            let rowsByID = Dictionary(zip(ids, located).filter { !$0.0.isEmpty }, uniquingKeysWith: { first, _ in first })
             let changes = WatchDiff.chatListChanges(previous: previous, current: current, knownChatIDs: known)
             previous = current
             for change in changes {

@@ -13,6 +13,9 @@ struct ChatIdentityRecord: Codable {
     /// A retired ID never points at a room again (`CHAT_ID_STALE`). Absent in schema 1.
     var retired: Bool?
     var retiredAt: Date?
+    /// The row's time text and member count when last seen (schema 3; absent before).
+    var lastTimeLabel: String?
+    var memberCount: Int?
 
     var isRetired: Bool {
         retired ?? false
@@ -27,12 +30,13 @@ private struct ChatIdentityRegistryDocument: Codable {
 
 /// `~/.kktcli/chat-registry.json`: synthetic chat_ids (see `ChatIdentityAssignment`).
 ///
-/// Schema 2 adds `retired`; schema 1 files are read as they are (every ID kept, none
-/// retired) and written back as schema 2 on the next change.
+/// Schema 2 added `retired`, schema 3 `lastTimeLabel` and `memberCount`. Older files are read
+/// as they are (records without those fields; nothing retired) and written back as schema 3
+/// on the next change.
 final class ChatIdentityRegistryStore: @unchecked Sendable {
     static let shared = ChatIdentityRegistryStore()
-    static let schemaVersion = 2
-    static let readableSchemaVersions: Set<Int> = [1, 2]
+    static let schemaVersion = 3
+    static let readableSchemaVersions: Set<Int> = [1, 2, 3]
 
     let fileURL: URL
 
@@ -54,7 +58,9 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
     }
 
     /// Assigns an ID to every row of a chat-list scan (`ChatIdentityAssignment.assign`):
-    /// matched records are updated, ambiguous leftovers retired, new rows recorded.
+    /// matched records are updated, records held for identical rows refreshed (they keep
+    /// their IDs but point at no row), ambiguous leftovers retired, new rows recorded. A row
+    /// that cannot be told apart from another same-name row gets "" (no ID).
     func assignChatIDs(for discoveries: [ChatListDiscovery]) -> [String] {
         var document = loadDocument()
         let now = Date()
@@ -65,11 +71,14 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
             guard let recordIndex else { continue }
             document.records[recordIndex] = updatedRecord(document.records[recordIndex], with: discoveries[rowIndex], now: now)
         }
+        for held in result.heldRecords {
+            document.records[held.record] = updatedRecord(document.records[held.record], with: discoveries[held.row], now: now)
+        }
         for recordIndex in result.retiredRecords {
             document.records[recordIndex].retired = true
             document.records[recordIndex].retiredAt = now
         }
-        for (rowIndex, recordIndex) in result.matchedRecords.enumerated() where recordIndex == nil {
+        for (rowIndex, recordIndex) in result.matchedRecords.enumerated() where recordIndex == nil && !result.rowIDs[rowIndex].isEmpty {
             document.records.append(ChatIdentityRecord(
                 chatID: result.rowIDs[rowIndex],
                 displayName: discoveries[rowIndex].title,
@@ -77,7 +86,9 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
                 lastPreviewNormalized: rows[rowIndex].preview,
                 firstSeenAt: now,
                 lastSeenAt: now,
-                lastSeenIndex: discoveries[rowIndex].listIndex
+                lastSeenIndex: discoveries[rowIndex].listIndex,
+                lastTimeLabel: rows[rowIndex].timeLabel,
+                memberCount: rows[rowIndex].memberCount
             ))
         }
 
@@ -122,6 +133,8 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
             title: discovery.title,
             normalizedName: ChatTextNormalizer.normalize(discovery.title),
             preview: normalizePreview(discovery.lastMessage),
+            timeLabel: normalizeTime(discovery.timeLabel),
+            memberCount: discovery.memberCount,
             listIndex: discovery.listIndex
         )
     }
@@ -130,7 +143,10 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         IdentityRecordState(
             chatID: record.chatID,
             normalizedName: record.normalizedName,
+            displayName: record.displayName,
             preview: record.lastPreviewNormalized,
+            timeLabel: record.lastTimeLabel,
+            memberCount: record.memberCount,
             retired: record.isRetired
         )
     }
@@ -163,7 +179,18 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         if let preview = Self.normalizePreview(discovery.lastMessage) {
             updated.lastPreviewNormalized = preview
         }
+        if let time = Self.normalizeTime(discovery.timeLabel) {
+            updated.lastTimeLabel = time
+        }
+        if let members = discovery.memberCount {
+            updated.memberCount = members
+        }
         return updated
+    }
+
+    static func normalizeTime(_ time: String?) -> String? {
+        guard let time = time?.trimmingCharacters(in: .whitespacesAndNewlines), !time.isEmpty else { return nil }
+        return time
     }
 
     static func normalizePreview(_ preview: String?) -> String? {

@@ -542,7 +542,14 @@ struct ChatListLocator {
     }
 
     static func discovery(_ row: LocatedChatRow) -> ChatListDiscovery {
-        ChatListDiscovery(title: row.title, lastMessage: row.summary.preview, listIndex: row.index, unread: row.summary.unread)
+        ChatListDiscovery(
+            title: row.title,
+            lastMessage: row.summary.preview,
+            listIndex: row.index,
+            unread: row.summary.unread,
+            timeLabel: row.summary.timeLabel,
+            memberCount: row.summary.memberCount
+        )
     }
 
     static func staleChatID(_ chatID: String, record: ChatIdentityRecord) -> ReadFailure {

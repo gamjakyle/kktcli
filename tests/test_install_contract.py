@@ -26,16 +26,29 @@ BASH = "/bin/bash"
 
 FAKE_CURL = """#!/bin/sh
 # curl double: serves release assets from $FAKE_RELEASE_DIR by file name, logs every URL.
+# .../releases/latest "redirects" to .../releases/tag/$FAKE_LATEST_TAG, or to .../releases
+# (as GitHub does for a repository without releases) when that is unset.
 out=
 url=
 while [ $# -gt 0 ]; do
   case $1 in
     -o) out=$2; shift 2 ;;
+    -w) shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
 done
 printf '%s\\n' "$url" >> "$FAKE_LOG_DIR/curl"
+case $url in
+  */releases/latest)
+    if [ -n "${FAKE_LATEST_TAG:-}" ]; then
+      printf '%s' "${url%/latest}/tag/$FAKE_LATEST_TAG"
+    else
+      printf '%s' "${url%/latest}"
+    fi
+    exit 0
+    ;;
+esac
 asset="$FAKE_RELEASE_DIR/${url##*/}"
 if [ -z "$out" ] || [ ! -f "$asset" ]; then
   echo "curl: (22) The requested URL returned error: 404" >&2
@@ -272,20 +285,42 @@ class InstallScriptDownloadTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, output(result))
                 self.assertIn(f"{RELEASES}/v{version}/{tarball_name(version)}", result.stdout)
 
-    def test_stops_before_downloading_without_a_valid_version(self) -> None:
+    def test_without_a_version_it_installs_the_latest_release(self) -> None:
+        name = self.box.publish("9.8.7")
         # Piped, the script has no VERSION file next to it, even when run inside a checkout.
         checkout = self.box.make_checkout("4.5.6")
-        for cwd in (self.box.root, checkout):
-            with self.subTest(cwd=cwd.name):
-                missing = self.box.run_piped(cwd=cwd)
+        result = self.box.run_piped(cwd=checkout, FAKE_LATEST_TAG="v9.8.7")
+        self.assertEqual(result.returncode, 0, output(result))
+        url = f"{RELEASES}/v9.8.7/{name}"
+        self.assertEqual(self.box.log("curl"), ["https://github.com/gamjakyle/kktcli/releases/latest", url, f"{url}.sha256"])
+        self.assertIn("Latest release: 9.8.7", result.stdout)
+        self.assertIn(f"{name}: OK", result.stdout)
+        self.assertEqual(self.box.home_files(), [".local", ".local/bin", ".local/bin/kktcli"])
+
+    def test_dry_run_without_a_version_does_not_look_up_the_latest_release(self) -> None:
+        result = self.box.run_piped("--dry-run")
+        self.assertEqual(result.returncode, 0, output(result))
+        self.assertIn("Would look up the latest release at https://github.com/gamjakyle/kktcli/releases/latest", result.stdout)
+        self.assertIn(f"Would download {RELEASES}/v<latest>/kktcli-<latest>-macos-arm64.tar.gz", result.stdout)
+        self.assertEqual(self.box.log("curl"), [])
+        self.assertEqual(self.box.home_files(), [])
+
+    def test_stops_before_downloading_without_a_valid_version(self) -> None:
+        # No release yet (GitHub then redirects .../releases/latest to .../releases), or a
+        # latest tag that is not X.Y.Z: nothing is downloaded.
+        for tag in ("", "nightly", "v1.2"):
+            with self.subTest(tag=tag):
+                missing = self.box.run_piped(FAKE_LATEST_TAG=tag)
                 self.assertNotEqual(missing.returncode, 0, output(missing))
-                self.assertIn("no version to install: pass --version X.Y.Z", missing.stderr)
+                self.assertIn("could not find the latest release at https://github.com/gamjakyle/kktcli/releases/latest", missing.stderr)
+                self.assertIn("pass --version X.Y.Z", missing.stderr)
+        self.assertEqual(set(self.box.log("curl")), {"https://github.com/gamjakyle/kktcli/releases/latest"})
         for version in ("v0.2.0", "0.2", "0.2.0-beta", "01.2.0", "0.2.0/../x"):
             with self.subTest(version=version):
                 result = self.box.run_piped("--version", version)
                 self.assertNotEqual(result.returncode, 0, output(result))
                 self.assertIn("is not a release version", result.stderr)
-        self.assertEqual(self.box.log("curl"), [])
+        self.assertEqual(set(self.box.log("curl")), {"https://github.com/gamjakyle/kktcli/releases/latest"})
         self.assertEqual(self.box.home_files(), [])
 
 

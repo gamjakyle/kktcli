@@ -54,6 +54,9 @@ struct ChatListDiscovery {
     let lastMessage: String?
     let listIndex: Int
     var unread: UnreadBadge = .none
+    /// The row's time text and member count: they tell same-name rooms apart.
+    var timeLabel: String? = nil
+    var memberCount: Int? = nil
 }
 
 struct ChatListEntry: Codable, Equatable {
@@ -122,7 +125,9 @@ struct ChatListScanner {
                 title: summary.title ?? "(Unknown Chat)",
                 lastMessage: summary.preview,
                 listIndex: index,
-                unread: summary.unread
+                unread: summary.unread,
+                timeLabel: summary.timeLabel,
+                memberCount: summary.memberCount
             )
             snapshots.append(ChatListSnapshotItem(element: row, discovery: discovery, summary: summary))
         }

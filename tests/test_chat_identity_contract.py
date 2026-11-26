@@ -22,13 +22,28 @@ class ChatIdentityContractTests(unittest.TestCase):
         self.assertNotIn("zippedCount", registry)
         assignment = read(ASSIGNMENT)
         self.assertNotIn("lastSeenIndex", assignment)
-        self.assertIn("leftoverRows.count == 1, leftoverRecords.count == 1", assignment)
+        self.assertIn("openRows.count == 1, openRecords.count == 1", assignment)
+        # Order: exact title, preview + time + members, preview, then elimination.
+        order = ["pairUnique { $0.title.nonEmpty }", "pairUnique { $0.compositeKey }", "pairUnique { $0.preview.nonEmpty }", "openRows.count == 1, openRecords.count == 1"]
+        positions = [assignment.index(text) for text in order]
+        self.assertEqual(positions, sorted(positions))
+        # resolve uses the same matching as assign.
+        resolve = assignment[assignment.index("public static func resolve("):]
+        self.assertIn("matchGroup(rows: groupRows.map { rows[$0].features }, records: active.map(\\.features))", resolve)
+        # Rows without an ID of their own (identical rows) get no record.
+        self.assertIn("where recordIndex == nil && !result.rowIDs[rowIndex].isEmpty", registry)
+        self.assertIn("for held in result.heldRecords {", registry)
 
     def test_registry_migrates_schema_1_and_keeps_retired_ids(self) -> None:
         registry = read(REGISTRY)
-        self.assertIn("static let schemaVersion = 2", registry)
-        self.assertIn("static let readableSchemaVersions: Set<Int> = [1, 2]", registry)
+        self.assertIn("static let schemaVersion = 3", registry)
+        self.assertIn("static let readableSchemaVersions: Set<Int> = [1, 2, 3]", registry)
         self.assertIn("var retired: Bool?", registry)
+        self.assertIn("var lastTimeLabel: String?", registry)
+        self.assertIn("var memberCount: Int?", registry)
+        # Rows without an ID are not watched.
+        watch = read(SOURCES / "kktcli" / "Commands" / "WatchCommand.swift")
+        self.assertIn("zip(located, ids).filter { !$0.1.isEmpty }", watch)
 
     def test_lookups_never_rerun_the_assignment_for_one_row(self) -> None:
         locator = read(LOCATOR)
