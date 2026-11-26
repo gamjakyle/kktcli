@@ -78,7 +78,7 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 | `read --chat-id` | 호출마다 채팅 목록 약 200행 재스캔 | 레지스트리의 마지막 위치부터 찾고 일치하면 멈춤 |
 | 채팅 목록 확인 | 메인 창의 표를 그대로 채팅 목록으로 읽음 | 행 모양(제목 + 시간·미리보기)으로 채팅 목록인지 확인, 다른 탭(친구 등)이면 카카오톡의 창 > 채팅(⌘2) 메뉴로 채팅 탭으로 바꾸고, 그래도 아니면 아무것도 읽거나 기록하지 않음 |
 | 방 전체 기록 | 없음 | `read --all-history`: 카카오톡이 이 Mac에 가진 기록 끝(또는 더 안 불러와질 때)까지, `meta.history`로 어디서 멈췄는지 표시 |
-| 같은 이름 방의 chat_id | 구별이 안 되면 목록 순서로 짝지어 ID가 다른 방으로 넘어갈 수 있음 | 미리보기가 정확히 같거나 하나씩 남을 때만 ID 유지, 아니면 옛 ID를 폐기(`CHAT_ID_STALE`)하고 새 ID 발급, 구별이 안 되면 `CHAT_AMBIGUOUS`로 후보 표시 |
+| 같은 이름 방의 chat_id | 구별이 안 되면 목록 순서로 짝지어 ID가 다른 방으로 넘어갈 수 있음 | 정확한 방 이름, 미리보기+시간+인원, 미리보기, 하나씩 남을 때 순으로만 ID 유지, 아니면 옛 ID를 폐기(`CHAT_ID_STALE`)하고 새 ID 발급, 모든 면이 똑같은 방은 chat_id 없이 `CHAT_AMBIGUOUS`로 후보 표시 |
 | 읽은 대화 보관·검색·내보내기 | 없음 | 읽은 메시지를 이 Mac에 보관(`~/.kktcli/messages`), `search`로 찾기, `export`로 마크다운·JSON·CSV 내보내기, 한 장 요약 틀 |
 | 여러 방 지켜보기 | 방 하나, 검색·Enter로 열기 | `watch --all`: 채팅 목록 위쪽 N개를 클릭·스크롤 없이 지켜보고 바뀐 방을 JSON 한 줄씩 알림, `--read`로 바뀐 방 읽기 |
 | `chats` 제목 | 안읽음 배지 문구가 방 제목으로 표시되는 경우 있음 | 제목 라벨(`_NS:40`)에서만 제목을 읽음, `has_unread`/`unread_count` 추가 |
@@ -161,6 +161,7 @@ Apple Silicon(arm64) Mac에서는 아래 한 줄로 설치합니다. GitHub 릴�
 SHA-256을 확인한 뒤 `~/.local/bin/kktcli`에 넣습니다.
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash   # 최신 릴리스
 curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
 ```
 

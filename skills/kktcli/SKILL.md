@@ -94,7 +94,9 @@ field; on failure use `error.code`:
 - `CHAT_ID_STALE` (exit status 5): that chat_id was retired because same-name rooms could
   not be told apart. Run `kktcli chats --json` and pick the room again with the user.
 - `CHAT_AMBIGUOUS` (exit status 6): several same-name rooms match; `details.candidates`
-  lists title, preview, time and member count. Show them and let the user choose.
+  lists title, preview, time and member count. Show them and let the user choose. A room
+  with `chat_id: null` in `chats` is identical in every way to another same-name room;
+  kktcli cannot read it by ID. Tell the user instead of guessing.
 - `MAIN_WINDOW_NOT_VISIBLE`: kktcli found KakaoTalk's main window on no desktop and could
   not open it without bringing KakaoTalk to the front (a main window on another desktop is
   read in place, `meta.main_window: "other_desktop"`; a closed one is opened with 창 > 채팅,

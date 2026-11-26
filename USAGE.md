@@ -16,11 +16,13 @@ server, configuration and troubleshooting. Read the safety and policy section of
 ### Install a release (Apple silicon)
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash   # the latest release
 curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
 ```
 
 `install.sh` downloads `kktcli-<version>-macos-arm64.tar.gz` and its `.sha256` from the
-GitHub release, installs only if the SHA-256 matches, and puts `kktcli` in `~/.local/bin`.
+GitHub release (without `--version`, `KKTCLI_VERSION` or a checkout's `VERSION` file: the
+latest release, found from where `releases/latest` redirects), installs only if the SHA-256 matches, and puts `kktcli` in `~/.local/bin`.
 On other Macs, when the download fails, or with `--from-source` it builds from a checkout
 instead. It then prints the Accessibility steps. `make dist` builds the release files.
 
@@ -146,6 +148,13 @@ badge, and the last-message preview (`last_message`; in text output with `--verb
 `chats` opens no room, so this preview is the only way kktcli can show an unread message
 without marking it read. `kktcli read` opens rooms with `has_unread: true` like any
 other, which marks them read (see [Unread rooms](#unread-rooms)).
+
+Rooms whose names are the same after removing spaces and punctuation keep their chat_ids by
+their exact title, then by preview + time + member count, then by preview, then when only
+one room and one ID are left; never by list position. Rooms identical in all of these get
+`chat_id: null` (`read` cannot tell them apart; their earlier IDs answer `CHAT_AMBIGUOUS`).
+When a room cannot be matched any more its old ID is retired (`CHAT_ID_STALE`) and it gets
+a new one.
 
 ### `read`
 

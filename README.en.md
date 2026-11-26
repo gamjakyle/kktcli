@@ -83,7 +83,7 @@ Please read this first.
 | `read --chat-id` | Rescans about 200 chat-list rows on every call | Starts at the registry's last known row and stops at the first match |
 | Checking the chat list | Reads whatever table the main window shows as the chat list | Verifies the rows look like chat rows (title plus time or preview); on another tab (e.g. 친구) switches with KakaoTalk's own 창 > 채팅 (⌘2) menu item; otherwise reads and records nothing |
 | A room's whole history | None | `read --all-history`: up to the top of what KakaoTalk keeps locally (or until no more rows load); `meta.history` says where it stopped |
-| chat_id of same-name rooms | Pairs them by list position when they cannot be told apart, so an ID can move to another room | Keeps an ID only on an exact preview match or one-to-one elimination; otherwise retires the old ID (`CHAT_ID_STALE`) and issues new ones; `CHAT_AMBIGUOUS` lists the candidates |
+| chat_id of same-name rooms | Pairs them by list position when they cannot be told apart, so an ID can move to another room | Keeps an ID by exact title, by preview + time + member count, by preview, or by one-to-one elimination; otherwise retires the old ID (`CHAT_ID_STALE`) and issues new ones; rooms identical in every feature get no chat_id and `CHAT_AMBIGUOUS` lists the candidates |
 | Keeping, searching and exporting what was read | None | Read messages are kept on this Mac (`~/.kktcli/messages`); `search`; `export` to Markdown, JSON or CSV; a one-page digest template |
 | Watching many rooms | One room, opened by search and Enter | `watch --all`: watches the top N chat-list rows without clicking or scrolling and prints one JSON line per change; `--read` reads the changed rooms |
 | `chats` titles | Unread badge text could appear as the room title | Title read only from the title label (`_NS:40`); adds `has_unread` / `unread_count` |
@@ -168,6 +168,7 @@ On an Apple silicon (arm64) Mac, one line downloads the release binary from GitH
 its SHA-256 and installs it as `~/.local/bin/kktcli`:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash   # the latest release
 curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
 ```
 

@@ -12,7 +12,16 @@ breaking changes are marked **BREAKING**.
   of reaching another room; a chat_id that cannot be told apart from same-name rooms fails
   with `CHAT_AMBIGUOUS` (exit 6) and lists the candidates. Fixes chat_ids swapping between
   same-name rooms, which could make `send --chat-id` reach the wrong person.
-- The registry (`~/.kktcli/chat-registry.json`) moves to schema 2; existing IDs are kept.
+- Same-name groups are matched by more than the preview, in this order: exact title, then
+  preview + time text + member count, then preview, then one-to-one elimination (each key
+  only when unique among both rows and records). Fixes rooms whose titles differ only in
+  punctuation, or that share a name and have empty previews, getting new IDs on every
+  `chats` and then failing with `CHAT_AMBIGUOUS`. Rooms identical in every feature get
+  `chat_id: null`; their existing IDs are kept as a set and answer `CHAT_AMBIGUOUS` instead
+  of being retired and reissued on every scan. `read --chat-id` uses the same matching, so an
+  ID from `chats` resolves right away.
+- The registry (`~/.kktcli/chat-registry.json`) moves to schema 3 (time text and member
+  count per record); existing IDs are kept.
 
 ### Reading, keeping and exporting
 - Read messages are kept in `~/.kktcli/messages/<chat_id>.jsonl` (plain text, directory
@@ -86,7 +95,9 @@ breaking changes are marked **BREAKING**.
 
 ### Install
 - `install.sh` installs a release tarball after checking its SHA-256 (arm64), or builds from
-  source; `make dist` builds `kktcli-<version>-macos-arm64.tar.gz` and its `.sha256`.
+  source; without `--version` (or `KKTCLI_VERSION`, or a checkout's `VERSION`) it installs
+  the latest GitHub release. `make dist` builds `kktcli-<version>-macos-arm64.tar.gz` and its
+  `.sha256`.
 
 ### Exit statuses
 - New: 5 `CHAT_ID_STALE`, 6 `CHAT_AMBIGUOUS`, 8 send failures, 9 `SEND_DISABLED`.

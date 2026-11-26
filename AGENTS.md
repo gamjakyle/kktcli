@@ -111,8 +111,10 @@ Chat window (title = room name; team, self and open chats drop the "팀채팅, "
   by hand; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`, exit status 3) and
   `--allow-unread` is a deprecated no-op. Keep `meta.unread_before`, `unread_after` and
   `marked_read` truthful (null when not checked).
-- chat_ids: never pair same-name rooms by position (`ChatIdentityAssignment`); a lookup
-  of one ID only refreshes that record (`ChatIdentityRegistryStore.refresh`).
+- chat_ids: never pair same-name rooms by position (`ChatIdentityAssignment`: exact title,
+  preview + time + members, preview, elimination; identical rows get no ID and their records
+  are held as a set); a lookup of one ID uses the same matching and only refreshes that
+  record (`ChatIdentityRegistryStore.refresh`).
 - Keep `read --json` output to exactly one JSON document on stdout.
 - Never put real room names, people's names or chat text in code, tests, docs or commit
   messages; use placeholders such as 홍길동 or 테스트방.

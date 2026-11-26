@@ -142,12 +142,18 @@ read.
 
 ### chat_ids are never guessed by position
 
-KakaoTalk exposes no room id, so chat_ids are synthetic. Several rooms can share a name; a
-record keeps its ID only when its last preview matches exactly one row, or when exactly one
-record and one row are left in that name group. Anything else retires the leftover IDs
-(they are never reused) and gives the rows new ones: a stale ID fails (`CHAT_ID_STALE`)
-rather than reaching another room. A lookup of one ID never re-runs the assignment; it only
-refreshes that record.
+KakaoTalk exposes no room id, so chat_ids are synthetic. Several rooms can share a
+normalized name (same-name 1:1 rooms, titles that differ only in punctuation). Within such a
+group a record keeps its ID, in this order, by its exact title, by preview + time text +
+member count, by its preview alone (each only when unique among both rows and records), or
+when exactly one record and one row are left. Time and preview change together when a
+message arrives (and the time text as days pass), so a changed key falls through to the
+next step. Rows that are identical in every feature get no ID of their own (`chats` shows
+`chat_id: null`); records that could be any of them are kept as a set and resolve to
+`CHAT_AMBIGUOUS`, so they are not retired and reissued on every scan. Anything else retires
+the leftover IDs (never reused) and gives the rows new ones: a stale ID fails
+(`CHAT_ID_STALE`) rather than reaching another room. A lookup of one ID uses the same
+matching but never re-runs the assignment; it only refreshes that record.
 
 ### What was read is kept locally, and exports are read-only
 
