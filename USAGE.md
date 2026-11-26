@@ -135,10 +135,10 @@ kktcli chats [options]
 | `-l N`, `--limit N` | Return at most `N` chats. Default: `20`. |
 | `--trace-ax` | Print AX traversal details. |
 | `--json` | Return one JSON document. |
-| `-k`, `--keep-window` | Keep a chat-list window that the command opened. |
+| `-k`, `--keep-window` | No effect (kept for compatibility). A main window opened with 창 > 채팅 is left open. |
 | `--idle-seconds SEC` | While KakaoTalk is in front, press nothing that opens or brings up a KakaoTalk window until the keyboard and mouse were idle this long (0–600). Default: `10`. See [Desktops and the activity guard](#desktops-and-the-activity-guard). |
 | `--wait-for-idle SEC` | Wait at most this long for that, then fail with `KAKAOTALK_IN_USE` (0–600; `0` fails at once). Default: `30`. |
-| `--allow-activate` | When KakaoTalk's main window is not visible, allow reopening it with 카카오톡 열기 even though that brings KakaoTalk to the front and may switch desktops. |
+| `--allow-activate` | When KakaoTalk's main window can be found on no desktop and not opened with 창 > 채팅, allow 카카오톡 열기 even though that brings KakaoTalk to the front and may switch desktops. |
 
 Each entry has a local synthetic `chat_id` (stored in `~/.kktcli/chat-registry.json`),
 the title from the row's title label, `has_unread` / `unread_count` from its unread
@@ -172,7 +172,7 @@ kktcli read --chat-ids-file <file> [options]
 | `--full-text` | Experimental. Fetch the full text of long messages (see [Long messages](#long-messages)). Not with `--background-safe`. |
 | `--idle-seconds SEC` | While KakaoTalk is in front, press nothing that opens or brings up a KakaoTalk window until the keyboard and mouse were idle this long (0–600). Default: `10`. See [Desktops and the activity guard](#desktops-and-the-activity-guard). |
 | `--wait-for-idle SEC` | Wait at most this long for that, then fail with `KAKAOTALK_IN_USE` (0–600; `0` fails at once). Default: `30`. |
-| `--allow-activate` | When KakaoTalk's main window is not visible, allow reopening it with 카카오톡 열기 even though that brings KakaoTalk to the front and may switch desktops. |
+| `--allow-activate` | When KakaoTalk's main window can be found on no desktop and not opened with 창 > 채팅, allow 카카오톡 열기 even though that brings KakaoTalk to the front and may switch desktops. |
 | `--background-safe` | Only read an already open chat window; never launch, activate, log in, open, resize or close anything. |
 | `-k`, `--keep-window` | Keep a chat window the command opened. |
 | `--layout MODE` | `preserve` (default), `left`, `right`, `split-left` or `split-right`. Non-default layouts activate and resize the window. |
@@ -220,26 +220,43 @@ messages without marking them read. `--allow-unread` is still accepted and has n
 
 #### Desktops and the activity guard
 
-**Another desktop or full-screen Space.** While you work in another full-screen Space,
-Accessibility reports no KakaoTalk windows at all (the window server still lists them, off
-screen). kktcli cannot tell that apart from a closed main window. Reopening the main window
-with 카카오톡 열기 brings KakaoTalk to the front and can switch your desktop, so when the
-main window is not visible and KakaoTalk is not in front, `chats` and `read` press nothing
-and fail with `MAIN_WINDOW_NOT_VISIBLE`. Show KakaoTalk on the current desktop, or pass
-`--allow-activate`. When KakaoTalk is already in front, the main window is reopened (no app
-switch). The error's `details` give `kakao_frontmost`, `ax_window_count` and the window
-server's layer-0 KakaoTalk window counts (`cg_layer0_window_count`,
-`cg_layer0_offscreen_count`); they do not say which case it is. Before any of this, a
-missing main window is looked for again for about 0.6 s with longer Accessibility timeouts,
-because a busy KakaoTalk (for example right after a window closed) can fail a single read;
-카카오톡 열기 is pressed only if it is still missing right before the press.
+**Another desktop or full-screen Space.** Accessibility's window list shows only the
+windows on the current desktop, so a main window on another desktop or Space looks exactly
+like a closed one. `read`, `chats`, `watch`, `send --preview` and list recovery look for it
+in this order, and never bring KakaoTalk to the front unless you allow it:
+
+1. The current desktop, looked at again for about 0.6 s with longer Accessibility timeouts
+   (a busy KakaoTalk, for example right after a window closed, can fail a single read).
+2. Another desktop or Space: the window is looked up by its Accessibility element id
+   (the technique window switchers such as AltTab use) and read where it is; nothing is
+   pressed and your desktop does not change. `meta.main_window` is `other_desktop`. The id
+   is cached in `~/.kktcli/ax-cache.json`; without it a search takes about 2 s (at most 4 s). This uses a
+   private macOS function looked up at run time; where it is missing, this step is skipped.
+   `KKTCLI_NO_ELEMENT_ID_SCAN=1` turns it off.
+3. Closed (the window server shows no KakaoTalk window that could be it): KakaoTalk's own
+   창 menu item **채팅** (⌘2), which opens the main window on the current desktop, on the
+   chat tab, without bringing KakaoTalk to the front (`opened_via_window_menu`). It waits
+   like opening a room (below) and is re-checked right before the press.
+4. **카카오톡 열기**, which brings KakaoTalk to the front and may switch your desktop, only
+   with `--allow-activate` (then `open KakaoTalk.app` with `--deep-recovery`).
+5. Otherwise `MAIN_WINDOW_NOT_VISIBLE`; nothing was pressed. Its `details` give
+   `kakao_frontmost`, `ax_window_count`, `element_id_scan` (what the id lookup did), the
+   window server's layer-0 KakaoTalk window counts (`cg_layer0_window_count`,
+   `cg_layer0_offscreen_count`) and `cg_unaccounted_window_count`, the windows kktcli could
+   not reach.
+
+Since KakaoTalk is logged in when its main window is found on another desktop, the login
+check (which would bring KakaoTalk to the front) is skipped then. A room opened from a main
+window on another desktop may open on that desktop; kktcli looks for it there too and
+closes it with its close button. `send` and `send-image` preview such a room but do not send
+to a window on another desktop (`SEND_TARGET_UNCERTAIN`).
 
 **While you use KakaoTalk.** When KakaoTalk is in front, a window opened by 채팅방 열기 or
 전체보기 becomes the key window: what you are typing goes into that room, and Enter would
 send it there. So while KakaoTalk is (or may be) in front and the keyboard or mouse was used
 less than `--idle-seconds` ago (default 10), kktcli presses nothing that opens or brings up
 a KakaoTalk window: the room's context menu and 채팅방 열기, 전체보기, the list recovery
-buttons, the legacy open, and each chat of a batch. 카카오톡 열기 activates KakaoTalk, so
+buttons, 창 > 채팅, the legacy open, and each chat of a batch. 카카오톡 열기 activates KakaoTalk, so
 it always waits for an idle user, whatever app is in front. kktcli checks every 0.5 s and
 goes on as soon as KakaoTalk is in the background or idle; the check is repeated right before
 each press. After `--wait-for-idle` seconds (default 30) it gives up with `KAKAOTALK_IN_USE`
@@ -276,11 +293,14 @@ preview is exactly "대화 중인 오픈채팅방이 없습니다." is not opene
 with `opened: false` and `conversation_count: 0`. Reading those conversations is not
 supported.
 
-**The chat list is checked first.** kktcli reads the main window's table as the chat list
-only when its first rows look like chat-list rows (title plus a time or a preview). On
-another tab (for example 친구) it presses KakaoTalk's own 창 menu item 채팅 (⌘2) once,
-after the activity guard, never 친구 or 더보기, and waits up to 2 s for the chat list
-(`meta.main_window` is then `switched_to_chat_tab`). If the chat list still does not show,
+**The chat list is checked first.** kktcli reads the main window's list as the chat list
+only when it is a table (the 친구 tab's list is an outline and never counts) and its first
+rows look like chat-list rows (title plus a time or a preview). On another tab (for example
+친구) it presses KakaoTalk's own 창 menu item 채팅 (⌘2) once, after the activity guard; only
+if that menu item is missing, the main window's `chatrooms` tab button instead (not yet
+tried live). It never presses 친구 or 더보기, and waits up to 2 s for the chat list
+(`meta.main_window` then includes `switched_to_chat_tab`; several values are joined with a
+comma, for example `other_desktop,switched_to_chat_tab`). If the chat list still does not show,
 it fails with `CHAT_LIST_UNAVAILABLE` and reads and records nothing; list recovery never
 presses anything on a table that is not the chat list.
 
@@ -297,10 +317,9 @@ Recovery, only when the wanted row is missing:
   **검색** toggle (for a hidden filter the toggle is pressed first to reveal the old
   query), then scans once more. Nothing is typed and Enter is never sent.
   `meta.list_recovery` lists what was pressed.
-- **Closed main window.** kktcli presses only KakaoTalk's menu item **카카오톡 열기**
-  (`showFirstWindow:`) and waits for the main window; this brings KakaoTalk to the front.
-  `open KakaoTalk.app` is used only with `--deep-recovery`. Reported as
-  `meta.main_window`.
+- **Closed main window.** See [Desktops and the activity guard](#desktops-and-the-activity-guard):
+  창 > 채팅 first, 카카오톡 열기 only with `--allow-activate`, `open KakaoTalk.app` only
+  with `--deep-recovery` as well. Reported as `meta.main_window`.
 
 Message fields: `author` is `"(me)"` for your own messages and `null` when the sender
 cannot be established (system lines, banners); `side` is `me`, `other`, `unknown` or
@@ -340,9 +359,10 @@ search typing, no Enter, no activation) and polled; new messages are printed as
 true when the previous messages could not be found again (everything shown is new to the
 watch). `--all` prints `{"event": "change", "change", "chat_id", "title", "preview", "time",
 "unread", "detected_at"}` with `change` = `new_message`, `unread_changed` or `new_room`; the
-first poll is the baseline and prints nothing. When KakaoTalk's main window is not visible it
-prints `{"event": "status", "status": "main_window_not_visible", ...}` once and keeps
-polling; it never reopens the window. When the main window shows another tab it prints
+first poll is the baseline and prints nothing. A main window on another desktop is read
+there (`{"event": "status", "status": "main_window", "location": "other_desktop"}` when that
+changes). When it cannot be found it prints `{"event": "status", "status":
+"main_window_not_visible", ...}` once and keeps polling; it never opens the window. When the main window shows another tab it prints
 `not_chat_tab` (it never switches tabs itself) and `chat_list_visible` when the chat list is
 back. Stop with `--duration`, `--count`, Ctrl-C or
 `SIGTERM`; a window kktcli opened is closed again.
@@ -360,7 +380,7 @@ kktcli send <chat> <message> [--preview] [options]
 | `--json` | One JSON document (`ok`, `mode`, `sent`, `cancelled`, `bubble_verified`, `preview`, `window`, `method`, `error`, `details`). |
 | `-k`, `--keep-window` | Keep the chat window if kktcli opened it. |
 | `--idle-seconds`, `--wait-for-idle` | As for `read`. |
-| `--allow-activate` | Allow bringing KakaoTalk to the front: to reopen a hidden main window, and for the Enter fallback below. |
+| `--allow-activate` | Allow bringing KakaoTalk to the front: 카카오톡 열기 when the main window can be found on no desktop and not opened with 창 > 채팅, and the Enter fallback below. |
 | `--trace-ax` | Print AX details. |
 
 Sending is off by default: until `kktcli config set send on`, everything but `--preview`
@@ -621,7 +641,7 @@ with a single error document.
 | `CHAT_LIST_UNAVAILABLE` | 1 | The main window does not show the chat list (another tab, e.g. 친구) and switching with 창 > 채팅 did not help or was not possible; nothing was read or recorded. |
 | `WINDOW_NOT_READY` | 1 | The main window could not be found or reopened. |
 | `MAIN_WINDOW_MINIMIZED`, `KAKAO_HIDDEN` | 1 | Restore KakaoTalk's window first. |
-| `MAIN_WINDOW_NOT_VISIBLE` | 1 | The main window is not visible (closed, minimised, or on another desktop or full-screen Space) and KakaoTalk is not in front; nothing was pressed. Show KakaoTalk, or pass `--allow-activate`. |
+| `MAIN_WINDOW_NOT_VISIBLE` | 1 | The main window was found neither on this nor on another desktop, and the window server shows a KakaoTalk window kktcli cannot reach (so it is not simply closed); nothing was pressed. Show KakaoTalk, or pass `--allow-activate`. |
 | `KAKAOTALK_IN_USE` | 75 | KakaoTalk stayed in front and in use for the whole `--wait-for-idle`; nothing was pressed. Retry later. |
 | `OPEN_CHAT_LIST` | 4 | The row opened a list of 1:1 open-chat conversations, not a chat; it was closed and nothing was read. |
 | `ROW_NOT_VISIBLE` | 1 | The row could not be scrolled into view. |
@@ -747,10 +767,12 @@ again.
 
 ### `MAIN_WINDOW_NOT_VISIBLE`
 
-KakaoTalk's main window is closed, minimised, or on another desktop or full-screen Space,
-and KakaoTalk is not in front. kktcli did not reopen it because that would bring KakaoTalk
-to the front and may switch your desktop. Show KakaoTalk on the current desktop (or bring it
-to the front yourself) and retry, or pass `--allow-activate`.
+kktcli found KakaoTalk's main window neither on the current desktop nor, by element id, on
+another one, and the window server shows a KakaoTalk window it cannot reach, so the window
+is probably not simply closed (where 창 > 채팅 would open it). kktcli did not press
+카카오톡 열기 because that would bring KakaoTalk to the front and may switch your desktop.
+`details.element_id_scan` says what the id lookup did (`unavailable` when this macOS lacks
+the function). Show KakaoTalk on the current desktop and retry, or pass `--allow-activate`.
 
 ### `KAKAOTALK_IN_USE`
 

@@ -30,12 +30,13 @@ CLI commands (Sources/kktcli/Commands)
 | `ChatListRecoverer` | Restores a search-filtered chat list by pressing only **취소** inside the search field and the top-bar **검색** toggle. |
 | `StructuredTranscriptReader` | Locates the transcript (`_NS:32` scroll area), reads rows newest-first until the limit and its context are covered, loads older rows by setting the scroll bar to 0 and polling the row count, probes for an earlier date separator. |
 | `UserActivityGuard` | Before each press that opens or brings up a KakaoTalk window: waits while KakaoTalk may be frontmost and the HID idle time is below `--idle-seconds` (always for 카카오톡 열기), re-checks right before the press, gives up with `KAKAOTALK_IN_USE`. Decision in `KktcliCore/UserActivityPolicy`. |
-| `MainWindowAccess` | Reopens a main window that Accessibility does not show only when KakaoTalk is frontmost or `--allow-activate` (`MainWindowPolicy`); otherwise `MAIN_WINDOW_NOT_VISIBLE` with Accessibility and window-server counts. |
+| `MainWindowAccess` | Finds the main window in the order of `MainWindowLookup`: kAXWindows (with a patient re-check), by element id on another desktop, 창 > 채팅 when the window server shows it is closed, 카카오톡 열기 only with `--allow-activate`; otherwise `MAIN_WINDOW_NOT_VISIBLE` with what each step saw. |
+| `KakaoWindowLookup`, `RemoteAXElement` | Read-only window lookup across desktops: kAXWindows plus elements by id through the private `_AXUIElementCreateWithRemoteToken` (dlsym; skipped when missing), the main window's id cached in `~/.kktcli/ax-cache.json`; windows a press opens on another desktop. |
 | `KakaoTalkInputGuard` | Checks, immediately before every posted key press or click, that KakaoTalk is frontmost (and owns the click point). |
 | `ChatWindowResolver`, `MessageContextResolver`, `KakaoTalkTranscriptReader` | Older search/keyboard based paths kept for `read --legacy-open`, `chats` refreshes and the cache command; `send`, `send-image` and `watch` open rooms like `read`. |
 | `ChatIdentityRegistryStore` | Local synthetic `chat_id` values derived from normalized names, with last seen row and preview. |
 | `CredentialStore`, `KakaoTalkAuthenticator` | Encrypted local credentials, login and lock-screen handling. |
-| `KktcliCore` | `ChatRowAnalyzer` (titles, unread badges), `TranscriptParser` (dates, sides, authors, burst times), `ChatQueryMatcher`, `RoomTitle`, `ListRecovery`, `SafetyPolicies` (frontmost policy, menu-item allowlist, the send button), `ChatIdentityAssignment` (chat_ids), `MessageStore` and `ExportFormatter` (local store, search, export), `WatchDiff`, `SendModel` (send preview and checks), `ChatListCheck` (is this table the chat list), `HistoryStatus` (`meta.history`), `KktcliConfig` (the `send` setting), `MCPMapping`, JSON output types. |
+| `KktcliCore` | `ChatRowAnalyzer` (titles, unread badges), `TranscriptParser` (dates, sides, authors, burst times), `ChatQueryMatcher`, `RoomTitle`, `ListRecovery`, `SafetyPolicies` (frontmost policy, menu-item allowlist, the send button), `ChatIdentityAssignment` (chat_ids), `MessageStore` and `ExportFormatter` (local store, search, export), `WatchDiff`, `SendModel` (send preview and checks), `ChatListCheck` (is this table the chat list), `HistoryStatus` (`meta.history`), `KktcliConfig` (the `send` setting), `MainWindowLookup` / `AXRemoteToken` / `RemoteElementScan` / `MainWindowLayout` (window lookup order, id tokens, tabs), `MCPMapping`, JSON output types. |
 | `MCPServerCommand` | stdio MCP server; runs the same binary as a subprocess per tool call. |
 | `VersionGenPlugin` / `VersionGenTool` | Validate `VERSION` (`MAJOR.MINOR.PATCH`) and generate `BuildVersion` at build time. |
 
@@ -107,12 +108,15 @@ bubble.
 Two live findings shape every press. A window opened while KakaoTalk is in front becomes
 key and takes whatever the user is typing (Enter would send it to that room), so
 window-opening presses wait for an idle user or a KakaoTalk in the background, and are
-re-checked right before they happen. And while the user works in another full-screen Space,
-Accessibility reports no KakaoTalk windows, which looks exactly like a closed main window;
-reopening it there would switch the user's desktop, so it is done only when KakaoTalk is
-already in front or the caller explicitly allows activation. The idle time comes from the
-HID system state (no permission needed); the window-server counts in the error are reported,
-not interpreted, because they cannot tell a closed window from one on another Space.
+re-checked right before they happen. And Accessibility's window list shows only the current
+desktop's windows, so a main window on another desktop or Space looks exactly like a closed
+one. kktcli therefore looks it up by element id first (as window switchers do; read-only,
+no desktop switch). Only when the window server shows no KakaoTalk window that could be the
+main window, i.e. it is closed, does it press 창 > 채팅, which opens it on the current desktop
+without activating KakaoTalk (live 2026-11-26). 카카오톡 열기 activates KakaoTalk and may
+switch desktops, so it needs `--allow-activate`. The idle time comes from the HID system
+state (no permission needed). The element-id function is private and looked up at run time,
+so a macOS without it only loses the other-desktop step.
 
 ### Long messages are flagged, and fetched only on request
 

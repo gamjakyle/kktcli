@@ -95,9 +95,11 @@ field; on failure use `error.code`:
   not be told apart. Run `kktcli chats --json` and pick the room again with the user.
 - `CHAT_AMBIGUOUS` (exit status 6): several same-name rooms match; `details.candidates`
   lists title, preview, time and member count. Show them and let the user choose.
-- `MAIN_WINDOW_NOT_VISIBLE`: KakaoTalk's main window is closed, minimised, or on another
-  desktop or full-screen Space. Ask the user to show KakaoTalk; use `--allow-activate`
-  only if they agree to KakaoTalk coming to the front.
+- `MAIN_WINDOW_NOT_VISIBLE`: kktcli found KakaoTalk's main window on no desktop and could
+  not open it without bringing KakaoTalk to the front (a main window on another desktop is
+  read in place, `meta.main_window: "other_desktop"`; a closed one is opened with 창 > 채팅,
+  `"opened_via_window_menu"`). Ask the user to show KakaoTalk; use `--allow-activate` only
+  if they agree to KakaoTalk coming to the front.
 - `CHAT_LIST_UNAVAILABLE`: the main window shows another tab (for example 친구) and
   switching to the chat list did not work; nothing was read or recorded. Ask the user to
   show KakaoTalk's chat list. A successful switch shows `meta.main_window:

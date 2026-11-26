@@ -56,12 +56,13 @@ Please read this first.
   brings up a window and waits; after 30 s (`--wait-for-idle`) it stops with
   `KAKAOTALK_IN_USE` (exit status 75). With KakaoTalk in the background, rooms open in the
   background.
-- **KakaoTalk is not brought to another desktop or full-screen Space.** While you work in
-  another full-screen Space, Accessibility shows no KakaoTalk windows at all. Reopening the
-  main window with 카카오톡 열기 would bring KakaoTalk to the front and switch your desktop,
-  so unless KakaoTalk is already in front kktcli presses nothing and stops with
-  `MAIN_WINDOW_NOT_VISIBLE`. Show KakaoTalk on the current desktop, or pass
-  `--allow-activate`.
+- **KakaoTalk is used on whatever desktop it is, without bringing it to the front.** A main
+  window on another desktop or full-screen Space is found by its Accessibility element id and
+  read in place (nothing pressed). A closed main window is opened on the current desktop with
+  KakaoTalk's own 창 > 채팅 (⌘2) menu item, which does not bring KakaoTalk to the front.
+  카카오톡 열기, which does, is used only with `--allow-activate`; otherwise kktcli stops with
+  `MAIN_WINDOW_NOT_VISIBLE`. The element-id lookup uses a private macOS function found at run
+  time; where it is missing, that step is skipped.
 - **What you read is kept on this Mac.** Messages read with `read` (and `watch --all
   --read`) are appended in plain text to `~/.kktcli/messages/<chat_id>.jsonl` (directory
   0700, files 0600). Use `read --no-save` to skip that and `kktcli store clear` to delete it.

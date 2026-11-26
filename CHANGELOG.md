@@ -26,7 +26,23 @@ breaking changes are marked **BREAKING**.
   `meta.history` (`complete`, `stopped`, `earliest_date`). Older messages need the user's own
   "지난 대화 보기" authentication in KakaoTalk; kktcli never presses it.
 
+### Main window on any desktop
+- **BREAKING** The main window is found wherever it is, without bringing KakaoTalk to the
+  front: on another desktop or full-screen Space by its Accessibility element id (read in
+  place, `meta.main_window: "other_desktop"`; id cached in `~/.kktcli/ax-cache.json`; private
+  function looked up at run time, skipped where missing, off with
+  `KKTCLI_NO_ELEMENT_ID_SCAN=1`); a closed one is opened with 창 > 채팅 (⌘2), which does not
+  activate KakaoTalk (`opened_via_window_menu`). 카카오톡 열기 now needs `--allow-activate`
+  even when KakaoTalk is in front. Used by `read`, `chats`, `watch`, `send --preview` and list
+  recovery; `watch --all` only reads (status `main_window` with `location`). `send` and
+  `send-image` do not send to a room window on another desktop (`SEND_TARGET_UNCERTAIN`).
+- `meta.main_window` can list several values, joined with a comma.
+- `chats --keep-window` has no effect any more.
+
 ### Chat list
+- Only an AXTable can be the chat list (the 친구 tab's list is an AXOutline); the scanner no
+  longer accepts outlines or lists. The tab is switched with 창 > 채팅, or the `chatrooms`
+  tab button only when that menu item is missing.
 - Fixed: `chats` could read the 친구 tab as the chat list and write friends into the chat_id
   registry. The main window's table is now checked to be the chat list before `chats`,
   `read`, `send`, `watch --all` or any registry write uses it. On another tab kktcli presses

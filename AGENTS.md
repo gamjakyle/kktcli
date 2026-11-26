@@ -53,8 +53,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 ## KakaoTalk for Mac 26.10 UI notes
 
 ```
-Main window (identifier "Main Window"):
-└── AXScrollArea > AXTable > AXRow > AXCell
+Main window (identifier "Main Window"; on another desktop reachable only by element id):
+├── AXButton "friends" / "chatrooms" / "more" (tabs; 창 menu: 친구 ⌘1, 채팅 ⌘2, 더보기 ⌘3)
+├── 친구 tab: AXScrollArea _NS:93 > AXOutline _NS:8 (never the chat list)
+├── 채팅 tab: AXButton "채팅방 추가", and
+└── AXScrollArea _NS:101 > AXTable _NS:63 > AXRow > AXCell
     _NS:40 title, Count Label member count, _NS:69 time, _NS:87/_NS:91 preview,
     _NS:138 unread badge ("안읽음 N"); the cell supports AXShowMenu
     (menu item openChatRoom: "채팅방 열기")
@@ -88,14 +91,19 @@ Chat window (title = room name; team, self and open chats drop the "팀채팅, "
 - Press only allowlisted elements and re-verify them right before the press.
 - Every press that opens or brings up a KakaoTalk window waits for `UserActivityGuard`
   (KakaoTalk in front and used < `--idle-seconds` ago → wait, then `KAKAOTALK_IN_USE`) and
-  re-checks it right before the press. 카카오톡 열기 goes only through `MainWindowAccess`:
-  never when the main window is not visible and KakaoTalk is not in front, unless
-  `--allow-activate` (`MAIN_WINDOW_NOT_VISIBLE`). A full-screen Space elsewhere makes
-  Accessibility report zero KakaoTalk windows.
+  re-checks it right before the press. The main window is found only through
+  `MainWindowAccess.resolve` (order in `MainWindowLookup`): kAXWindows, then by element id
+  on another desktop (`KakaoWindowLookup`, read-only), then 창 > 채팅 only when the window
+  server shows no main window (closed), then 카카오톡 열기 only with `--allow-activate`,
+  else `MAIN_WINDOW_NOT_VISIBLE`. kAXWindows lists only the current desktop's windows.
+- `_AXUIElementCreateWithRemoteToken` is private: resolve it with dlsym only
+  (`RemoteAXElement`), never `@_silgen_name`, so kktcli still launches without it.
 - Before anything uses the main window's table (chats, read, send, watch --all, any
-  registry write), verify it is the chat list (`ChatListCheck`). To switch tabs press only
-  the 창 menu item titled 채팅 with command key 2 (`ChatTabMenu`), through the activity
-  guard; never press 친구 or 더보기, and never run list recovery on an unverified table.
+  registry write), verify it is the chat list (`ChatListCheck`: an AXTable, never the 친구
+  tab's AXOutline, with chat-row structure). To switch tabs press only the 창 menu item
+  titled 채팅 with command key 2 (`ChatTabMenu`), or, only when that item is missing, the
+  `chatrooms` tab button, through the activity guard; never press 친구, 더보기, `friends` or
+  `more`, and never run list recovery on an unverified table.
 - Sending is off unless `kktcli config set send on` (`~/.config/kktcli/config.json`); never
   turn it on from code, tests or skills. There is no confirmation dialog: the preview and the
   user's explicit 보내 are the check.
