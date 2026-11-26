@@ -142,6 +142,9 @@ struct ReadCommand: ParsableCommand {
     @Flag(name: .long, help: "Include system messages (joins, notices)")
     var includeSystem: Bool = false
 
+    @Flag(name: .long, help: "Do not keep the messages read in the local store (~/.kktcli/messages)")
+    var noSave: Bool = false
+
     @Option(name: .long, help: "While KakaoTalk is in front, press nothing until the keyboard and mouse were idle this many seconds")
     var idleSeconds: Double = UserActivityPolicy.defaultIdleSeconds
 
@@ -266,6 +269,27 @@ struct ReadCommand: ParsableCommand {
         let mainWindow: String?
         /// Time spent waiting for the user to leave KakaoTalk idle or in the background.
         let waitedForUserMs: Int
+        var store: StoreReport?
+    }
+
+    /// What the local message store kept from this read (`meta.store`).
+    struct StoreReport: Encodable {
+        var chatID: String?
+        var saved: Int
+        var skipped: String?
+
+        enum CodingKeys: String, CodingKey {
+            case chatID = "chat_id"
+            case saved
+            case skipped
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(chatID, forKey: .chatID)
+            try container.encode(saved, forKey: .saved)
+            try container.encode(skipped, forKey: .skipped)
+        }
     }
 
     private var scrollbackEnabled: Bool {
@@ -483,8 +507,31 @@ struct ReadCommand: ParsableCommand {
             windowTitleEmpty: opened.windowTitleEmpty,
             listRecovery: opened.listRecovery,
             mainWindow: mainWindowAction?.rawValue,
-            waitedForUserMs: Int((session.activity.totalWaited - waitedBefore) * 1000)
+            waitedForUserMs: Int((session.activity.totalWaited - waitedBefore) * 1000),
+            store: keep(result.items, target: target, title: opened.rowTitle ?? chatTitle)
         )
+    }
+
+    /// Appends the messages read to the local store (not with --no-save). A read by name is
+    /// kept only when the name belongs to exactly one known chat_id.
+    private func keep(_ items: [TranscriptItem], target: ReadTarget, title: String) -> StoreReport? {
+        guard !noSave else { return nil }
+        let chatID: String
+        switch target {
+        case .chatID(let id, _):
+            chatID = id
+        case .name:
+            let matches = ChatIdentityRegistryStore.shared.records(withNormalizedName: ChatTextNormalizer.normalize(title))
+            guard matches.count == 1 else {
+                return StoreReport(chatID: nil, saved: 0, skipped: "no unique chat_id for this name; read with --chat-id to keep it")
+            }
+            chatID = matches[0].chatID
+        }
+        do {
+            return StoreReport(chatID: chatID, saved: try MessageArchive.shared.append(chatID: chatID, chat: title, items: items), skipped: nil)
+        } catch {
+            return StoreReport(chatID: chatID, saved: 0, skipped: "\(error)")
+        }
     }
 
     private func resolveTarget() throws -> ReadTarget {
@@ -874,6 +921,7 @@ struct ReadCommand: ParsableCommand {
         let truncatedMessages: Int
         let fullText: FullTextFetcher.Report?
         let waitedForUserMs: Int
+        let store: StoreReport?
 
         enum CodingKeys: String, CodingKey {
             case openedVia = "opened_via"
@@ -894,6 +942,7 @@ struct ReadCommand: ParsableCommand {
             case truncatedMessages = "truncated_messages"
             case fullText = "full_text"
             case waitedForUserMs = "waited_for_user_ms"
+            case store
         }
 
         func encode(to encoder: Encoder) throws {
@@ -916,6 +965,7 @@ struct ReadCommand: ParsableCommand {
             try container.encode(truncatedMessages, forKey: .truncatedMessages)
             try container.encode(fullText, forKey: .fullText)
             try container.encode(waitedForUserMs, forKey: .waitedForUserMs)
+            try container.encode(store, forKey: .store)
         }
     }
 
@@ -997,7 +1047,8 @@ struct ReadCommand: ParsableCommand {
                     interrupted: outcome.result.interrupted,
                     truncatedMessages: items.filter(\.truncated).count,
                     fullText: outcome.result.fullText,
-                    waitedForUserMs: outcome.waitedForUserMs
+                    waitedForUserMs: outcome.waitedForUserMs,
+                    store: outcome.store
                 )
             )
     }

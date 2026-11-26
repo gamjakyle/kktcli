@@ -21,7 +21,7 @@ BUILD_PATH = REPO_ROOT / os.environ.get("KKTCLI_BUILD_PATH", ".build")
 PLAIN_TEXT_NOTICE = "The store contains chat content in plain text on this Mac"
 RECORD_KEYS = {
     "chat_id", "chat", "date", "time", "time_raw", "author", "side", "kind", "body", "occurrence",
-    "edited", "truncated", "saved_at",
+    "edited", "truncated", "image_count", "attachment_count", "saved_at",
 }
 # Anything that reaches KakaoTalk or the Accessibility API.
 KAKAOTALK_OR_AX = re.compile(

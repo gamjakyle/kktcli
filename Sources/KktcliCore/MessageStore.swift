@@ -23,6 +23,9 @@ public struct StoredMessage: Codable, Equatable, Sendable {
     public var occurrence: Int
     public var edited: Bool
     public var truncated: Bool
+    /// Images and attachments in the message (0 in files written before 0.2.0 recorded them).
+    public var imageCount: Int
+    public var attachmentCount: Int
     /// ISO-8601 time the record was saved.
     public var savedAt: String
 
@@ -39,6 +42,8 @@ public struct StoredMessage: Codable, Equatable, Sendable {
         case occurrence
         case edited
         case truncated
+        case imageCount = "image_count"
+        case attachmentCount = "attachment_count"
         case savedAt = "saved_at"
     }
 
@@ -55,6 +60,8 @@ public struct StoredMessage: Codable, Equatable, Sendable {
         occurrence: Int,
         edited: Bool,
         truncated: Bool,
+        imageCount: Int = 0,
+        attachmentCount: Int = 0,
         savedAt: String
     ) {
         self.chatID = chatID
@@ -69,6 +76,8 @@ public struct StoredMessage: Codable, Equatable, Sendable {
         self.occurrence = occurrence
         self.edited = edited
         self.truncated = truncated
+        self.imageCount = imageCount
+        self.attachmentCount = attachmentCount
         self.savedAt = savedAt
     }
 
@@ -87,6 +96,8 @@ public struct StoredMessage: Codable, Equatable, Sendable {
         occurrence = try container.decodeIfPresent(Int.self, forKey: .occurrence) ?? 0
         edited = try container.decodeIfPresent(Bool.self, forKey: .edited) ?? false
         truncated = try container.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+        imageCount = try container.decodeIfPresent(Int.self, forKey: .imageCount) ?? 0
+        attachmentCount = try container.decodeIfPresent(Int.self, forKey: .attachmentCount) ?? 0
         savedAt = try container.decodeIfPresent(String.self, forKey: .savedAt) ?? ""
     }
 
@@ -105,6 +116,8 @@ public struct StoredMessage: Codable, Equatable, Sendable {
         try container.encode(occurrence, forKey: .occurrence)
         try container.encode(edited, forKey: .edited)
         try container.encode(truncated, forKey: .truncated)
+        try container.encode(imageCount, forKey: .imageCount)
+        try container.encode(attachmentCount, forKey: .attachmentCount)
         try container.encode(savedAt, forKey: .savedAt)
     }
 }
@@ -187,6 +200,8 @@ public enum MessageStore {
                 occurrence: occurrence,
                 edited: item.edited,
                 truncated: item.truncated,
+                imageCount: item.imageCount,
+                attachmentCount: item.attachmentCount,
                 savedAt: savedAt
             ))
         }

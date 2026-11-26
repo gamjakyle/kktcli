@@ -325,9 +325,16 @@ struct AnyEncodable: Encodable {
     }
 }
 
-/// Placeholder until the local store is wired in: everything read counts as new.
+/// `watch --all --read`: the messages of a read that the local store does not have yet. They
+/// are appended to it (the store's dedup rule keeps legitimate repeats).
 enum WatchStore {
     static func newAndSaved(_ items: [TranscriptItem], chatID: String, chat: String) -> [TranscriptItem] {
-        items.filter { $0.kind == .message }.suffix(5)
+        let archive = MessageArchive.shared
+        let kept = items.filter { $0.kind == .message || $0.kind == .system }
+        let incoming = MessageStore.records(from: kept, chatID: chatID, chat: chat, savedAt: MessageStore.timestamp(Date()))
+        let existing = (try? archive.records(chatID: chatID)) ?? []
+        let fresh = MessageStore.merge(existing: existing, incoming: incoming)
+        _ = try? archive.append(chatID: chatID, chat: chat, items: kept)
+        return incoming.indices.filter { fresh.contains(incoming[$0]) }.map { kept[$0] }
     }
 }

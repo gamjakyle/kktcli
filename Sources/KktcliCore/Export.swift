@@ -50,6 +50,23 @@ public struct ExportMessage: Codable, Equatable, Sendable {
     }
 }
 
+extension ExportMessage {
+    public init(stored: StoredMessage) {
+        self.init(
+            chatID: stored.chatID,
+            chat: stored.chat,
+            date: stored.date,
+            time: stored.time,
+            author: stored.author,
+            body: stored.body,
+            kind: stored.kind,
+            imageCount: stored.imageCount,
+            attachmentCount: stored.attachmentCount,
+            truncated: stored.truncated
+        )
+    }
+}
+
 public struct ExportFilter: Equatable, Sendable {
     public var chatIDs: [String]
     /// Inclusive bounds: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM".

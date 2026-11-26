@@ -299,7 +299,7 @@ struct MessageStoreTests {
         let object = try #require(try JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as? [String: Any])
         #expect(Set(object.keys) == [
             "chat_id", "chat", "date", "time", "time_raw", "author", "side", "kind", "body", "occurrence",
-            "edited", "truncated", "saved_at",
+            "edited", "truncated", "image_count", "attachment_count", "saved_at",
         ])
         #expect(object["author"] is NSNull)
         #expect(object["time"] is NSNull)
