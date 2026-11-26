@@ -26,23 +26,23 @@
     {
       "id": 3,
       "prompt": "출시 준비 채팅방에 '배포 완료했습니다.'라고 보내줘.",
-      "expected_output": "The exact chat is resolved, the message is previewed with --dry-run, and the actual text send runs once because the user explicitly requested delivery.",
+      "expected_output": "The exact chat is resolved, the message is previewed with --preview, the user's explicit request covers this text, and the actual send runs once and is reported from its JSON (sent, bubble_verified).",
       "files": [],
       "expectations": [
         "Resolves an unambiguous chat_id before sending",
-        "Runs the exact text through --dry-run before the actual send",
+        "Runs the exact text through --preview before the actual send",
         "Runs the actual send no more than once and reports success only from its result"
       ]
     },
     {
       "id": 4,
       "prompt": "디자인팀 채팅방에 보낼 /tmp/review.png 이미지 전송 명령을 준비해줘. 아직 이미지는 보내지 마.",
-      "expected_output": "The image path and recipient requirements are explained, but send-image is not executed because the user requested preparation only.",
+      "expected_output": "The recipient and image are checked with send-image --preview only; the real send-image is not run because the user asked for preparation only.",
       "files": [],
       "expectations": [
-        "Recognizes that send-image has no dry-run mode",
-        "Does not execute kktcli send-image",
-        "Returns the command as a preview and notes that explicit send authorization is still required"
+        "Uses send-image --preview (or only explains the command) instead of sending",
+        "Does not execute the real kktcli send-image",
+        "Notes that sending still needs the user's explicit 보내 and their on-screen confirmation"
       ]
     }
   ]

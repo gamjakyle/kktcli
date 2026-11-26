@@ -51,14 +51,14 @@ kktcli chats --json --limit 30
 kktcli read --chat-id "<chat_id>" --limit 20
 ```
 
-Preview a send without changing KakaoTalk:
+Preview a send (nothing is sent):
 
 ```bash
-kktcli send "Chat name" "Hello" --dry-run
+kktcli send --chat-id "<chat_id>" "Hello" --preview
 ```
 
 Only after the user explicitly asked for that exact message to that exact chat, omit
-`--dry-run` to send it once.
+`--preview`; kktcli then asks for confirmation on screen before it sends once.
 
 ## Authentication
 
@@ -333,34 +333,46 @@ polling; it never reopens the window. Stop with `--duration`, `--count`, Ctrl-C 
 ### `send`
 
 ```bash
-kktcli send <recipient> <message> [options]
-kktcli send --chat-id <chat-id> <message> [options]
+kktcli send --chat-id <chat-id> <message> [--preview] [options]
+kktcli send <chat> <message> [--preview] [options]
 ```
 
 | Option | Description |
 |---|---|
-| `--chat-id ID` | A `chat_id` from `kktcli chats`. |
-| `--dry-run` | Print the target and message without touching KakaoTalk. |
-| `--no-cache` | Do not use the AX path cache. |
-| `--refresh-cache` | Clear the relevant cached paths first. |
-| `-k`, `--keep-window` | Keep windows opened by the command. |
-| `--deep-recovery` | Deeper window recovery. |
+| `--preview` (alias `--dry-run`) | Send nothing; open the room like `read` and show who it goes to, the last 3 messages, a same-name warning, the exact text with line and character counts, and the method. |
+| `--json` | One JSON document (`ok`, `mode`, `sent`, `cancelled`, `bubble_verified`, `preview`, `window`, `method`, `error`, `details`). |
+| `-k`, `--keep-window` | Keep the chat window if kktcli opened it. |
+| `--idle-seconds`, `--wait-for-idle` | As for `read`. |
+| `--allow-activate` | Allow bringing KakaoTalk to the front: to reopen a hidden main window, and for the Enter fallback below. |
 | `--trace-ax` | Print AX details. |
 
-Sending needs keystrokes (Enter). kktcli brings KakaoTalk to the front and posts input
-only while KakaoTalk is verifiably frontmost; otherwise it stops with `NOT_FRONTMOST`,
-clears the unsent text from the input field, and sends nothing. Send one message per
-explicit request. Never use it for bulk messaging.
+The room is found and opened like `read` (activity guard, main-window policy, chat-list
+menu; no search typing). A `chat_id` must point at exactly one row; a name must be unique;
+when other rooms share the name, a window of that name that was already open is refused
+(`SEND_TARGET_UNCERTAIN`). Without `--preview` a macOS confirmation dialog shows the room,
+its last messages and the full text: 취소 is the default (Return and Esc cancel), 보내기
+counts only for a real mouse click after 1 s, and the dialog cancels itself after 120 s
+(`SEND_CANCELLED`, exit 7). No option skips it, so an agent or script cannot send without
+you seeing the exact text and clicking. After 보내기, kktcli checks that the window still
+shows the same room with nothing new, refuses to overwrite a draft in the input box, puts
+the text in with AXValue, presses the room's own 전송 button once and verifies the new
+outgoing bubble. If the button is missing or stays disabled, the input is cleared and
+nothing is sent (`SEND_BUTTON_UNAVAILABLE`), unless `--allow-activate` allows an Enter
+fallback (KakaoTalk is brought to the front, Enter goes through the frontmost check, and
+the previous app is brought back). Failures after the dialog exit with 8. One message per
+run; never use it for bulk messaging.
 
 ### `send-image`
 
 ```bash
-kktcli send-image <recipient> <image-path> [options]
+kktcli send-image --chat-id <chat-id> <image-path> [--preview] [options]
+kktcli send-image <chat> <image-path> [--preview] [options]
 ```
 
-Options: `--no-cache`, `-k`/`--keep-window`, `--deep-recovery`, `--trace-ax`. The image is
-placed on the pasteboard and pasted with Cmd+V (only while KakaoTalk is frontmost).
-There is no dry run.
+The same preview and confirmation (with the file name and size). Pasting needs KakaoTalk
+in front, so it is brought to the front only after 보내기; the clipboard is saved before
+and restored after, the previous app is brought back, and the new image bubble is
+verified.
 
 ### `inspect`
 
@@ -397,8 +409,8 @@ Each tool call runs the same `kktcli` binary as a subprocess.
 | Tool | Purpose |
 |---|---|
 | `kktcli_read` | Read by `chat` or `chat_id`. Options: `limit` (1–500), `skip_unread` (default `false`; `allow_unread` is accepted and ignored), `scrollback` (true/false; omit for automatic), `scrollback_timeout` (seconds), `idle_seconds`, `wait_for_idle`, `allow_activate`, `include_system`, `background_safe`, `keep_window`, `layout`, `deep_recovery`, `trace_ax`. |
-| `kktcli_send` | Send a text message by chat name. |
-| `kktcli_send_image` | Send a local image by chat name. |
+| `kktcli_send` | One text message to `chat_id` (or a unique `chat`). `mode`: `preview` (default; sends nothing, returns the preview and a human block) or `send` (the confirmation dialog appears on the user's screen; the call waits up to 130 s plus `wait_for_idle`). Result: `sent`, `cancelled`, `bubble_verified`. Also `idle_seconds`, `wait_for_idle`, `allow_activate`, `keep_window`, `trace_ax`. `confirm` was removed in 0.2.0. |
+| `kktcli_send_image` | The same for `image_path`. |
 
 A read call times out after 8 s (15 s with `deep_recovery`) plus `wait_for_idle` (default
 30 s, the most kktcli waits for an idle user); an explicit `scrollback: true` extends that by
@@ -593,6 +605,9 @@ with a single error document.
 | `ACCESSIBILITY_PERMISSION_DENIED`, `KAKAO_NOT_RUNNING`, `KAKAO_LAUNCH_FAILED`, `KAKAO_UNAVAILABLE`, `KAKAO_AUTH_FAILED` | 1 | Setup or login problem. |
 | `NOT_FRONTMOST`, `SEARCH_MISS`, `FOCUS_FAIL`, `INPUT_NOT_REFLECTED`, `LEGACY_OPEN_FAILED` | 1 | `--legacy-open` failures. |
 | `INTERRUPTED` | 130 | Stopped before a room was opened. |
+| `SEND_CANCELLED` | 7 | `send` / `send-image`: the confirmation was cancelled, timed out or could not be shown; nothing was sent. |
+| `SEND_TARGET_CHANGED`, `SEND_CONTEXT_CHANGED`, `SEND_TARGET_UNCERTAIN`, `SEND_INPUT_NOT_EMPTY`, `SEND_INPUT_REJECTED`, `SEND_INPUT_UNAVAILABLE`, `SEND_BUTTON_UNAVAILABLE` | 8 | Nothing was sent (the input was left empty again). |
+| `SEND_UNVERIFIED` | 8 | The bubble could not be verified; `details.probably_sent` says whether KakaoTalk took the text. Read the room before doing anything else; never resend blindly. |
 
 ## Configuration
 

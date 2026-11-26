@@ -38,6 +38,11 @@ Please read this first.
 - **Never mass-send.** `send` and `send-image` remain for single messages the user
   explicitly asked for. Repeated sending to many rooms or people looks like spam and
   can get the account restricted.
+- **Nothing is sent unseen.** `send --preview` sends nothing and shows the target room
+  (name, kind, members, chat_id), its last messages, a same-name warning and the exact
+  text. A real send shows a confirmation dialog on screen and sends only when you click
+  보내기 with the mouse (취소 is the default; it cancels itself after 120 s). No option skips
+  it, so an AI or a script cannot send something you have not seen.
 - **Unread rooms are opened, and opening marks them read.** `read` opens a room with
   unread messages just as a person opening it by hand would, so the other participants
   get read receipts. To avoid that, pass `--skip-unread`: a room whose chat-list row
@@ -221,8 +226,8 @@ your edited copy to use it.
 ## Coding agent skill
 
 [`skills/kktcli`](skills/kktcli/SKILL.md) tells coding agents how to use kktcli safely
-(read first, say that opening an unread room marks it read, send only on explicit request
-and after a dry run, once). For Claude Code, copy the folder to `~/.claude/skills/kktcli`
+(read first, say that opening an unread room marks it read, summarise with the template,
+send only after showing a preview and the user's explicit 보내, once). For Claude Code, copy the folder to `~/.claude/skills/kktcli`
 and invoke it with `/kktcli`. For other agents, follow their skill installation
 instructions.
 

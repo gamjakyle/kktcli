@@ -46,8 +46,8 @@ class AgentSkillContractTests(unittest.TestCase):
     def test_text_sending_requires_dry_run_and_explicit_authorization(self) -> None:
         skill = SKILL_PATH.read_text(encoding="utf-8")
 
-        dry_run = 'kktcli send --chat-id "<chat_id>" "<message>" --dry-run'
-        actual_send = 'kktcli send --chat-id "<chat_id>" "<message>"'
+        dry_run = 'kktcli send --chat-id "<chat_id>" "<message>" --preview --json'
+        actual_send = 'kktcli send --chat-id "<chat_id>" "<message>" --json'
         self.assertIn(dry_run, skill)
         self.assertIn(actual_send, skill)
         self.assertLess(skill.index(dry_run), skill.rindex(actual_send))
@@ -59,8 +59,10 @@ class AgentSkillContractTests(unittest.TestCase):
     def test_image_and_watch_workflows_name_their_safety_boundaries(self) -> None:
         skill = SKILL_PATH.read_text(encoding="utf-8")
 
-        self.assertIn('kktcli send-image "<recipient>" "/absolute/path/to/image.png"', skill)
-        self.assertRegex(skill, r"(?i)send-image.*(?:no|does not have).*(?:dry-run|preview)")
+        self.assertIn('kktcli send-image --chat-id "<chat_id>" "/absolute/path/to/image.png" --preview --json', skill)
+        self.assertIn("said 보내", skill)
+        self.assertRegex(skill, r"(?i)at most 3 lines")
+        self.assertRegex(skill, r"(?i)never add facts")
         self.assertIn('kktcli watch --chat-id "<chat_id>" --json --duration 600', skill)
         self.assertIn("kktcli watch --all --json --duration 600", skill)
         self.assertRegex(skill, r"(?i)(?:stop|terminate).*(?:watch|process)")

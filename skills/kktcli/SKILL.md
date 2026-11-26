@@ -128,37 +128,45 @@ running.
    Use only facts from the export, keep dates, times, numbers and links verbatim, cite each
    item (date, sender), and write "없음" for empty sections.
 
-## 5. Send text only with a dry run first
+## 5. Send text only after a preview and the user's 보내
+
+Draft concisely: keep dates, times, places, amounts, links and asks verbatim; drop
+greetings, background and repetition and tell the user what you dropped; never add facts;
+at most 3 lines unless the user asked for more.
 
 ```bash
-kktcli send --chat-id "<chat_id>" "<message>" --dry-run
+kktcli send --chat-id "<chat_id>" "<message>" --preview --json
 ```
 
-Check the dry-run output for the intended ID and exact text. Then:
+`--preview` (alias `--dry-run`) sends nothing. Show the user the recipient (title, kind,
+member count), the last messages, any same-name warning and the exact text. Then:
 
-- If the user explicitly asked, requested or authorized the actual send, run it once:
+- Only when the user explicitly asked for the send, saw that preview and said 보내 (or
+  clearly authorized exactly this text to exactly this chat), run it once:
 
   ```bash
-  kktcli send --chat-id "<chat_id>" "<message>"
+  kktcli send --chat-id "<chat_id>" "<message>" --json
   ```
 
-- If the user asked for a draft or preview, report the dry run and stop.
-- If the recipient or content changed after the dry run, run a new dry run.
+  kktcli then shows its own confirmation on the user's screen; only the user's mouse click
+  sends. Report `sent`, `cancelled` and `bubble_verified` from the JSON.
+- A request to draft, rewrite or preview is not a request to send: report the preview and
+  stop. If the recipient or text changes, preview again.
+- `SEND_CANCELLED` (exit 7) means nothing was sent. Any other send failure (exit 8) may
+  have left the outcome uncertain: read the room before anything else and never send the
+  same text twice.
 
-Sending types into KakaoTalk, so kktcli brings it to the front; if it cannot verify that
-KakaoTalk is frontmost it stops with `NOT_FRONTMOST` and sends nothing. Pass the message
-as one argument (argument-array form when available); never build an interpolated shell
-command from message text.
+Pass the message as one argument (argument-array form when available); never build an
+interpolated shell command from message text.
 
-## 6. Send an image only with explicit intent
+## 6. Send an image the same way
 
 ```bash
-kktcli send-image "<recipient>" "/absolute/path/to/image.png"
+kktcli send-image --chat-id "<chat_id>" "/absolute/path/to/image.png" --preview --json
 ```
 
-`send-image` has no dry-run or preview mode and sends immediately, so do not run it for
-draft or preview requests. It takes a recipient name, not a `chat_id`; do not send when
-names are duplicated or ambiguous.
+Same rules: preview first, the user's explicit 보내, then the real `send-image` (without
+`--preview`), which shows the same on-screen confirmation with the file name and size.
 
 ## 7. Diagnose without widening the action
 

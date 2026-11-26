@@ -36,6 +36,11 @@ breaking changes are marked **BREAKING**.
   fallback). `send --preview` (`--dry-run` is an alias) sends nothing and shows the target,
   the last messages, a same-name warning and the exact text. Same-name rooms need a chat_id
   that resolves to exactly one row.
+- **BREAKING** A real send always shows a macOS confirmation dialog (room, last messages,
+  full text): 취소 is the default, 보내기 counts only for a real mouse click after 1 s, and it
+  cancels itself after 120 s (`SEND_CANCELLED`, exit 7). No option skips it. The text is then
+  put into the room's input box and its own 전송 button is pressed once; the new bubble is
+  verified. A draft already in the input box is never overwritten.
 - send-image restores the clipboard and the previously frontmost app.
 
 ### MCP
