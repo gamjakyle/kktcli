@@ -53,6 +53,9 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
   메인 창을 다시 여는 '카카오톡 열기'는 카카오톡을 앞으로 가져와 데스크톱을 바꿔 버리므로,
   카카오톡이 맨 앞이 아니면 아무것도 누르지 않고 `MAIN_WINDOW_NOT_VISIBLE`로 멈춥니다.
   카카오톡을 지금 데스크톱에 띄우거나 `--allow-activate`를 주세요.
+- **읽은 대화는 이 Mac에 파일로 보관됩니다.** `read`(와 `watch --all --read`)로 읽은 메시지는
+  `~/.kktcli/messages/<chat_id>.jsonl`에 평문으로 쌓입니다(폴더 0700, 파일 0600). 보관하지
+  않으려면 `read --no-save`, 지우려면 `kktcli store clear`를 쓰세요.
 - **대화 내용은 이 Mac에 남습니다.** kktcli에는 네트워크 코드가 없습니다. 다만 출력을
   AI 서비스(코딩 에이전트, 챗봇 등)에 넘기면 그 내용이 해당 회사로 전송됩니다.
   대화 상대의 개인정보도 함께 넘어가므로 필요한 만큼만 읽어 주세요.
@@ -62,11 +65,14 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 
 ## kmsg와 달라진 점
 
-| 영역 | kmsg 1.260921.0 | kktcli 0.1.0 |
+| 영역 | kmsg 1.260921.0 | kktcli 0.2.0 |
 |---|---|---|
 | 방 열기 | 행 선택 + Enter, 검색창 입력, 더블클릭(키·마우스 이벤트) | 채팅 목록 행의 메뉴 항목 **채팅방 열기**만 손쉬운 사용 동작으로 누름. 키 입력 없음, 카카오톡이 뒤에 있어도 동작 |
 | 안 읽은 방 | 그대로 열어 읽음 표시 전달 | 사람이 열 때처럼 열어 읽음 표시 전달, `--skip-unread`면 열지 않음(`UNREAD_REFUSED`), JSON에 열기 전후 안읽음 표시(`unread_before`·`unread_after`·`marked_read`) |
 | `read --chat-id` | 호출마다 채팅 목록 약 200행 재스캔 | 레지스트리의 마지막 위치부터 찾고 일치하면 멈춤 |
+| 같은 이름 방의 chat_id | 구별이 안 되면 목록 순서로 짝지어 ID가 다른 방으로 넘어갈 수 있음 | 미리보기가 정확히 같거나 하나씩 남을 때만 ID 유지, 아니면 옛 ID를 폐기(`CHAT_ID_STALE`)하고 새 ID 발급, 구별이 안 되면 `CHAT_AMBIGUOUS`로 후보 표시 |
+| 읽은 대화 보관·검색·내보내기 | 없음 | 읽은 메시지를 이 Mac에 보관(`~/.kktcli/messages`), `search`로 찾기, `export`로 마크다운·JSON·CSV 내보내기, 한 장 요약 틀 |
+| 여러 방 지켜보기 | 방 하나, 검색·Enter로 열기 | `watch --all`: 채팅 목록 위쪽 N개를 클릭·스크롤 없이 지켜보고 바뀐 방을 JSON 한 줄씩 알림, `--read`로 바뀐 방 읽기 |
 | `chats` 제목 | 안읽음 배지 문구가 방 제목으로 표시되는 경우 있음 | 제목 라벨(`_NS:40`)에서만 제목을 읽음, `has_unread`/`unread_count` 추가 |
 | 메시지 파싱 | `date`가 비고, 연속 메시지 시간이 앞 메시지 시간으로 채워짐 | 날짜 구분선으로 `date`, 연속 메시지 시간 추론(`time_source`: `label`/`inferred`), 보낸 사람 이어받기, 채널 배너를 `(me)`로 오인하지 않음 |
 | 이전 메시지 | 처음 로드된 행만 | 스크롤백(`--scrollback`, 시간 제한 있음) |
@@ -76,8 +82,8 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 | `--json` | 결과가 없거나 실패하면 일반 텍스트 | 항상 JSON 한 개(오류 코드·종료 상태 포함) |
 | 목록 상태 복구 | 없음 | 검색어로 걸러진 채팅 목록, 닫힌 메인 창을 정해진 버튼·메뉴로만 복구 |
 | 팀채팅·오픈채팅 | 검색 경로에서 실패할 수 있음 | 행 제목 `팀채팅, <이름>`·`오픈채팅, <이름>`과 창 제목 `<이름>`을 맞춰 처리, 제목 없는 오픈채팅 창도 대화 내용이 보이면 인식, 1:1 오픈채팅 대화 목록을 여는 행은 닫고 `OPEN_CHAT_LIST`로 알림(목록 안 대화는 못 읽음) |
-| 배포 | `update` 명령, Homebrew, 릴리스 자동화 | 소스 빌드만, 네트워크 코드 없음, 데이터 폴더 분리 |
-| MCP | `kmsg_*` 도구 | `kktcli_*` 도구, `skip_unread`·스크롤백 옵션, 읽기 오류 코드 전달 |
+| 배포 | `update` 명령, Homebrew, 릴리스 자동화 | `install.sh`(릴리스 파일 SHA-256 확인 후 설치, 안 되면 소스 빌드), 프로그램에는 네트워크 코드 없음, 데이터 폴더 분리 |
+| MCP | `kmsg_*` 도구 | `kktcli_*` 도구, `skip_unread`·스크롤백 옵션, 읽기 오류 코드 전달, 보내기 도구는 기본이 미리보기(`mode=preview`) |
 
 ## 측정 결과
 
@@ -161,7 +167,7 @@ curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | 
 swift build -c release
 mkdir -p ~/.local/bin
 install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
-kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
 kktcli status      # 손쉬운 사용 권한, 카카오톡 실행·로그인 상태 확인
 ```
 
@@ -177,10 +183,30 @@ kktcli read --chat-id "<chat_id>" --limit 20 --json
 kktcli read --chat-ids-file ids.txt --json          # 여러 방을 한 번에(방마다 결과 하나)
 kktcli read "방 이름" --limit 200 --scrollback      # 이전 메시지까지
 kktcli read "방 이름" --json --background-safe      # 이미 열린 창만 읽기
+kktcli search "회의실" --since 2026-11-01           # 보관한 메시지에서 찾기
+kktcli export --chat-id "<chat_id>" --out 방.md      # 읽기 쉬운 마크다운으로 내보내기
+kktcli watch --all --json                          # 채팅 목록 위쪽 30개 지켜보기(클릭 없음)
 ```
 
 `read`는 이미 열린 창이 있으면 그 창을 읽고, 없으면 채팅 목록에서 방을 찾아 열고,
 다 읽은 뒤 닫습니다. 명령과 옵션은 [USAGE.md](USAGE.md)에 있습니다.
+
+## 대화 정리하기
+
+1. `kktcli read --chat-id <chat_id> --limit 200 --scrollback`으로 읽거나, 이미 보관한
+   메시지를 `kktcli search`로 찾습니다.
+2. `kktcli export --chat-id <chat_id> --since 2026-11-01 --out 방.md`로 날짜별로 정리된
+   마크다운을 만듭니다. `--format csv`는 엑셀(Mac)에서 한글이 깨지지 않게 BOM을 붙입니다.
+3. AI에게 `방.md`와 [`templates/방-요약.md`](templates/방-요약.md)를 주고 "이 틀로 한 장
+   정리해 줘"라고 하면 됩니다. 스킬(`skills/kktcli`)의 "정리하기" 순서가 이 과정을 따릅니다.
+
+### 정리 틀 고쳐 쓰기
+
+`templates/방-요약.md`는 기본 틀입니다(기간·방 / 한눈에 보기 3줄 / 공지·결정 / 자주 나온
+질문과 답 / 자료·링크 / 할 일·마감 / 답 안 된 질문). 팀마다 이 파일을 복사해서 제목과 항목을
+바꿔 쓰면 됩니다. 코딩은 필요 없습니다. 틀 안의 주석은 AI에게 원본에 있는 사실만 쓰고,
+날짜·숫자는 그대로 옮기고, 항목마다 출처(날짜, 보낸 사람)를 달라고 지시합니다. 고친 틀의
+경로를 AI에게 알려 주면 그 틀로 정리합니다.
 
 ## 코딩 에이전트 스킬
 

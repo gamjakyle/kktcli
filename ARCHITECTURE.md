@@ -35,7 +35,7 @@ CLI commands (Sources/kktcli/Commands)
 | `ChatWindowResolver`, `MessageContextResolver`, `KakaoTalkTranscriptReader` | Older search/keyboard based paths used by `send`, `send-image`, `watch` and `read --legacy-open`. |
 | `ChatIdentityRegistryStore` | Local synthetic `chat_id` values derived from normalized names, with last seen row and preview. |
 | `CredentialStore`, `KakaoTalkAuthenticator` | Encrypted local credentials, login and lock-screen handling. |
-| `KktcliCore` | `ChatRowAnalyzer` (titles, unread badges), `TranscriptParser` (dates, sides, authors, burst times), `ChatQueryMatcher`, `RoomTitle`, `ListRecovery`, `SafetyPolicies` (frontmost policy, menu-item allowlist), `MCPMapping`, JSON output types. |
+| `KktcliCore` | `ChatRowAnalyzer` (titles, unread badges), `TranscriptParser` (dates, sides, authors, burst times), `ChatQueryMatcher`, `RoomTitle`, `ListRecovery`, `SafetyPolicies` (frontmost policy, menu-item allowlist, the send button), `ChatIdentityAssignment` (chat_ids), `MessageStore` and `ExportFormatter` (local store, search, export), `WatchDiff`, `SendModel` (send preview and checks), `MCPMapping`, JSON output types. |
 | `MCPServerCommand` | stdio MCP server; runs the same binary as a subprocess per tool call. |
 | `VersionGenPlugin` / `VersionGenTool` | Validate `VERSION` (`MAJOR.MINOR.PATCH`) and generate `BuildVersion` at build time. |
 
@@ -115,6 +115,28 @@ after the window is closed (`unread_before`, `unread_after`, `marked_read`). Apa
 the chat-list preview (`chats`), kktcli cannot show unread messages without marking them
 read.
 
+### chat_ids are never guessed by position
+
+KakaoTalk exposes no room id, so chat_ids are synthetic. Several rooms can share a name; a
+record keeps its ID only when its last preview matches exactly one row, or when exactly one
+record and one row are left in that name group. Anything else retires the leftover IDs
+(they are never reused) and gives the rows new ones: a stale ID fails (`CHAT_ID_STALE`)
+rather than reaching another room. A lookup of one ID never re-runs the assignment; it only
+refreshes that record.
+
+### What was read is kept locally, and exports are read-only
+
+Successful reads append to one JSON-lines file per chat under `~/.kktcli/messages`
+(0700/0600), deduplicated on date, time, author, body and the occurrence within that group,
+so legitimate repeats survive. `search` and `export` only read those files; they never touch
+KakaoTalk.
+
+### `watch --all` only reads the list
+
+It reads the top chat-list rows every few seconds and diffs them (`WatchDiff`); it never
+scrolls, clicks or reopens the main window. Opening the changed rooms is opt-in (`--read`)
+and goes through the same guard as `read`.
+
 ### Pure logic is separated and tested
 
 Everything that can be decided from captured AX snapshots lives in `KktcliCore` and is
@@ -128,6 +150,7 @@ check source-level guarantees (separate data paths, no network code, MCP options
 | `~/.config/kktcli/credentials.json`, `credentials/primary.key` | Encrypted credentials and their key (owner-only permissions). |
 | `~/.kktcli/chat-registry.json` | Synthetic chat identities. |
 | `~/.kktcli/ax-cache.json` | Cached AX paths for the legacy paths. |
+| `~/.kktcli/messages/<chat_id>.jsonl` | Messages kept from reads (plain text; `read --no-save`, `kktcli store clear`). |
 
 kktcli is a fork of [kmsg](https://github.com/channprj/kmsg) and deliberately uses
 different paths, so an installed kmsg keeps its own data.

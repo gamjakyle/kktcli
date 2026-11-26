@@ -81,6 +81,10 @@ field; on failure use `error.code`:
   read.
 - `CHAT_NOT_IN_LIST`, `AMBIGUOUS_CHAT`, `UNKNOWN_CHAT_ID`: refresh with `kktcli chats
   --json` and confirm the chat with the user.
+- `CHAT_ID_STALE` (exit status 5): that chat_id was retired because same-name rooms could
+  not be told apart. Run `kktcli chats --json` and pick the room again with the user.
+- `CHAT_AMBIGUOUS` (exit status 6): several same-name rooms match; `details.candidates`
+  lists title, preview, time and member count. Show them and let the user choose.
 - `MAIN_WINDOW_NOT_VISIBLE`: KakaoTalk's main window is closed, minimised, or on another
   desktop or full-screen Space. Ask the user to show KakaoTalk; use `--allow-activate`
   only if they agree to KakaoTalk coming to the front.
@@ -99,12 +103,30 @@ kktcli read --chat-id "<chat_id>" --limit 20 --json --background-safe
 ## 4. Watch for new messages
 
 ```bash
-kktcli watch "<chat>" --json
+kktcli watch --chat-id "<chat_id>" --json --duration 600
+kktcli watch --all --json --duration 600        # top 30 chat-list rows, no clicks
 ```
 
-Use an exact title. `watch` needs KakaoTalk in front to open a closed room. Keep it
-bounded by the requested condition or duration, and stop or terminate the watch process
-when the task ends. Do not leave an orphaned watcher running.
+One chat is opened like `read`; `--all` only reads the chat list and prints one JSON line
+per change (`new_message`, `unread_changed`, `new_room`); add `--read` only when the user
+wants the changed rooms read (that marks them read). Always bound it with `--duration` or
+`--count`, and stop the watch process when the task ends. Do not leave an orphaned watcher
+running.
+
+## 정리하기 (summarise a room on one page)
+
+1. Get the messages: `kktcli read --chat-id "<chat_id>" --limit 200 --scrollback --json`
+   (kept in the local store), or find kept ones with `kktcli search "<text>" --json`.
+2. Export them readably:
+
+   ```bash
+   kktcli export --chat-id "<chat_id>" --since 2026-11-01 --out /tmp/room.md
+   ```
+
+3. Fill the template into one page: the default is `templates/방-요약.md` in the kktcli
+   repository; when the user gives their team's own template path, use that file instead.
+   Use only facts from the export, keep dates, times, numbers and links verbatim, cite each
+   item (date, sender), and write "없음" for empty sections.
 
 ## 5. Send text only with a dry run first
 

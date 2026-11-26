@@ -61,8 +61,18 @@ class AgentSkillContractTests(unittest.TestCase):
 
         self.assertIn('kktcli send-image "<recipient>" "/absolute/path/to/image.png"', skill)
         self.assertRegex(skill, r"(?i)send-image.*(?:no|does not have).*(?:dry-run|preview)")
-        self.assertIn('kktcli watch "<chat>" --json', skill)
+        self.assertIn('kktcli watch --chat-id "<chat_id>" --json --duration 600', skill)
+        self.assertIn("kktcli watch --all --json --duration 600", skill)
         self.assertRegex(skill, r"(?i)(?:stop|terminate).*(?:watch|process)")
+
+    def test_summarise_workflow_uses_export_and_the_template(self) -> None:
+        skill = SKILL_PATH.read_text(encoding="utf-8")
+        self.assertIn("## 정리하기", skill)
+        self.assertIn("kktcli export --chat-id", skill)
+        self.assertIn("templates/방-요약.md", skill)
+        self.assertRegex(skill, r"(?i)team's own template")
+        self.assertIn("CHAT_ID_STALE", skill)
+        self.assertIn("CHAT_AMBIGUOUS", skill)
 
     def test_eval_set_covers_read_unread_text_send_and_image_intents(self) -> None:
         payload = json.loads(EVALS_PATH.read_text(encoding="utf-8"))

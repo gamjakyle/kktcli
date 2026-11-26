@@ -57,6 +57,9 @@ Please read this first.
   so unless KakaoTalk is already in front kktcli presses nothing and stops with
   `MAIN_WINDOW_NOT_VISIBLE`. Show KakaoTalk on the current desktop, or pass
   `--allow-activate`.
+- **What you read is kept on this Mac.** Messages read with `read` (and `watch --all
+  --read`) are appended in plain text to `~/.kktcli/messages/<chat_id>.jsonl` (directory
+  0700, files 0600). Use `read --no-save` to skip that and `kktcli store clear` to delete it.
 - **Chat contents stay on this Mac.** kktcli contains no network code. If you pipe its
   output into an AI service (a coding agent, a chatbot), that content is transferred to
   that company, together with your chat partners' personal data. Read only what the
@@ -67,11 +70,14 @@ Please read this first.
 
 ## What changed from kmsg
 
-| Area | kmsg 1.260921.0 | kktcli 0.1.0 |
+| Area | kmsg 1.260921.0 | kktcli 0.2.0 |
 |---|---|---|
 | Opening a room | Row select + Enter, typing into search, double-click (key and mouse events) | Presses only the row's context-menu item **채팅방 열기** through Accessibility; no keystrokes, works with KakaoTalk in the background |
 | Unread rooms | Opened, which sends read receipts | Opened like by hand, which sends read receipts; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`); JSON reports the badge before and after (`unread_before`, `unread_after`, `marked_read`) |
 | `read --chat-id` | Rescans about 200 chat-list rows on every call | Starts at the registry's last known row and stops at the first match |
+| chat_id of same-name rooms | Pairs them by list position when they cannot be told apart, so an ID can move to another room | Keeps an ID only on an exact preview match or one-to-one elimination; otherwise retires the old ID (`CHAT_ID_STALE`) and issues new ones; `CHAT_AMBIGUOUS` lists the candidates |
+| Keeping, searching and exporting what was read | None | Read messages are kept on this Mac (`~/.kktcli/messages`); `search`; `export` to Markdown, JSON or CSV; a one-page digest template |
+| Watching many rooms | One room, opened by search and Enter | `watch --all`: watches the top N chat-list rows without clicking or scrolling and prints one JSON line per change; `--read` reads the changed rooms |
 | `chats` titles | Unread badge text could appear as the room title | Title read only from the title label (`_NS:40`); adds `has_unread` / `unread_count` |
 | Message parsing | `date` empty; unlabeled burst messages took the previous message's time | `date` from date separators, burst times inferred (`time_source`: `label` / `inferred`), sender carried forward, channel banners never attributed to `(me)` |
 | Older messages | Only the initially loaded rows | Scrollback (`--scrollback`, time-bounded) |
@@ -81,8 +87,8 @@ Please read this first.
 | `--json` | Plain text when empty or failing | Always exactly one JSON document (error code and exit status) |
 | List state recovery | None | Restores a search-filtered chat list and a closed main window by pressing only specific buttons / menu items |
 | Team and open chats | Could fail in the search fallback | Matches row titles `팀채팅, <name>` / `오픈채팅, <name>` with window title `<name>`; recognises an untitled open-chat window when it shows a chat; a row that opens the list of 1:1 open-chat conversations is closed and reported as `OPEN_CHAT_LIST` (those conversations cannot be read) |
-| Distribution | `update` command, Homebrew, release automation | Build from source; no network code; separate data directories |
-| MCP | `kmsg_*` tools | `kktcli_*` tools, `skip_unread` and scrollback options, read error codes passed through |
+| Distribution | `update` command, Homebrew, release automation | `install.sh` (release tarball checked against its SHA-256, or a source build); no network code in the program; separate data directories |
+| MCP | `kmsg_*` tools | `kktcli_*` tools, `skip_unread` and scrollback options, read error codes passed through, send tools preview by default (`mode=preview`) |
 
 ## Measured results
 
@@ -169,7 +175,7 @@ may need to be added again.
 swift build -c release
 mkdir -p ~/.local/bin
 install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
-kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
 kktcli status      # Accessibility permission, KakaoTalk running and logged in
 ```
 
@@ -185,11 +191,32 @@ kktcli read --chat-id "<chat_id>" --limit 20 --json
 kktcli read --chat-ids-file ids.txt --json          # several rooms in one run, one result each
 kktcli read "Room name" --limit 200 --scrollback   # include older messages
 kktcli read "Room name" --json --background-safe   # only read an already open window
+kktcli search "meeting" --since 2026-11-01          # search the messages kept so far
+kktcli export --chat-id "<chat_id>" --out room.md   # readable Markdown export
+kktcli watch --all --json                           # watch the top 30 rows (no clicks)
 ```
 
 `read` reads an open window in place; otherwise it finds the room in the chat list,
 opens it, reads it and closes it again. All commands and options are in
 [USAGE.md](USAGE.md).
+
+## Summarising a room
+
+1. Read with `kktcli read --chat-id <chat_id> --limit 200 --scrollback`, or find kept
+   messages with `kktcli search`.
+2. `kktcli export --chat-id <chat_id> --since 2026-11-01 --out room.md` writes Markdown
+   grouped by day; `--format csv` adds a BOM so Excel on the Mac shows Korean.
+3. Give the AI `room.md` and [`templates/방-요약.md`](templates/방-요약.md) and ask for a
+   one-page summary. The skill's "정리하기" workflow follows these steps.
+
+### Editing the template (정리 틀 고쳐 쓰기)
+
+`templates/방-요약.md` is the default one-page frame (period and room / three-line
+overview / announcements and decisions / frequent questions and answers / material and
+links / to-dos and deadlines / open questions). Teams copy the file and change its headings
+and items; no coding needed. Its comments tell the AI to use only facts from the source,
+keep dates and numbers verbatim and cite each item (date, sender). Give the AI the path of
+your edited copy to use it.
 
 ## Coding agent skill
 

@@ -13,17 +13,28 @@ server, configuration and troubleshooting. Read the safety and policy section of
 - Accessibility permission for the `kktcli` binary you run
 - Swift 6 or later to build
 
+### Install a release (Apple silicon)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
+```
+
+`install.sh` downloads `kktcli-<version>-macos-arm64.tar.gz` and its `.sha256` from the
+GitHub release, installs only if the SHA-256 matches, and puts `kktcli` in `~/.local/bin`.
+On other Macs, when the download fails, or with `--from-source` it builds from a checkout
+instead. It then prints the Accessibility steps. `make dist` builds the release files.
+
 ### Build from source
 
 ```bash
 swift build -c release
 mkdir -p ~/.local/bin
 install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
-kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
 ```
 
-Make sure `~/.local/bin` is on `PATH`. kktcli has no self-update; rebuild from source to
-update. It keeps its own state (see [Local state](#local-state)) and never touches the
+Make sure `~/.local/bin` is on `PATH`. kktcli has no self-update; install a newer release
+or rebuild from source to update. It keeps its own state (see [Local state](#local-state)) and never touches the
 files of an installed kmsg.
 
 ## Quick start
@@ -86,7 +97,7 @@ and depend on stored credentials.
 ```bash
 kktcli
 kktcli --help
-kktcli --version   # 0.1.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
 kktcli -v
 ```
 
@@ -156,6 +167,7 @@ kktcli read --chat-ids-file <file> [options]
 | `--scrollback` / `--no-scrollback` | Load older messages when fewer than `--limit` are loaded. Automatic by default; opt-in with `--background-safe`. |
 | `--scrollback-timeout SEC` | Time budget for loading older messages (0–600). Default: `4`. Automatic scrollback also stops about 6.5 s after the command started. |
 | `--include-system` | Include system messages (joins, notices). |
+| `--no-save` | Do not keep the messages read in the [local message store](#local-message-store). |
 | `--full-text` | Experimental. Fetch the full text of long messages (see [Long messages](#long-messages)). Not with `--background-safe`. |
 | `--idle-seconds SEC` | While KakaoTalk is in front, press nothing that opens or brings up a KakaoTalk window until the keyboard and mouse were idle this long (0–600). Default: `10`. See [Desktops and the activity guard](#desktops-and-the-activity-guard). |
 | `--wait-for-idle SEC` | Wait at most this long for that, then fail with `KAKAOTALK_IN_USE` (0–600; `0` fails at once). Default: `30`. |
@@ -288,22 +300,35 @@ and prints what was read with `meta.interrupted: true`.
 ### `watch`
 
 ```bash
-kktcli watch <chat> [options]
+kktcli watch --chat-id <chat-id> [options]     # one chat
+kktcli watch <chat> [options]                  # one chat by its (unique) name
+kktcli watch --all [--top 30] [--read]         # the top of the chat list
 ```
 
 | Option | Description |
 |---|---|
-| `--poll-interval S` | Poll interval in seconds. Default: `0.2` (clamped to 0.2–10). |
-| `--json` | One pretty-printed JSON object per event. |
-| `--include-system` | Include system rows. |
-| `-k`, `--keep-window` | Keep a chat window opened by the command. |
-| `--deep-recovery` | Deeper window recovery. |
+| `--all` | Watch the top chat-list rows instead of one chat. Reads only: no scrolling, no clicks. |
+| `--top N` | Rows to watch with `--all` (1–200). Default: `30`. |
+| `--read` | With `--all`: open each changed room (activity guard, chat-list menu; read receipts are sent as when you open it), print its newest messages and keep them in the local store. |
+| `--poll-interval S` | Seconds between polls (0.2–3600). Default: `1`, or `3` with `--all`. |
+| `--duration S` | Stop after this many seconds. |
+| `--count N` | Stop after this many events. |
+| `--json` | One JSON object per line. |
+| `--include-system` | Include system rows (one chat). |
+| `-k`, `--keep-window` | Keep a chat window kktcli opened. |
+| `--idle-seconds`, `--wait-for-idle`, `--allow-activate` | As for `read`. |
 | `--trace-ax` | Print AX details. |
 
-`watch` opens the room through KakaoTalk's search when it is not open (this needs
-KakaoTalk in front; keystrokes are posted only while it is). At startup it stabilizes a
-baseline for up to two seconds and does not replay the existing history. Stop it with
-Ctrl-C or `SIGTERM`.
+One chat is opened like `read` (activity guard, main-window policy, chat-list menu; no
+search typing, no Enter, no activation) and polled; new messages are printed as
+`{"event": "message", "chat", "chat_id", "message", "gap", "detected_at"}`, where `gap` is
+true when the previous messages could not be found again (everything shown is new to the
+watch). `--all` prints `{"event": "change", "change", "chat_id", "title", "preview", "time",
+"unread", "detected_at"}` with `change` = `new_message`, `unread_changed` or `new_room`; the
+first poll is the baseline and prints nothing. When KakaoTalk's main window is not visible it
+prints `{"event": "status", "status": "main_window_not_visible", ...}` once and keeps
+polling; it never reopens the window. Stop with `--duration`, `--count`, Ctrl-C or
+`SIGTERM`; a window kktcli opened is closed again.
 
 ### `send`
 
@@ -468,6 +493,7 @@ On failure `chats --json` prints an error document like `read` does (`"ok": fals
     "rows_read": 84,
     "rows_total": 84,
     "scrollback": null,
+    "store": { "chat_id": null, "saved": 0, "skipped": "no unique chat_id for this name; read with --chat-id to keep it" },
     "truncated_messages": 0,
     "unread_after": null,
     "unread_before": null,
@@ -548,6 +574,8 @@ with a single error document.
 | `UNREAD_REFUSED` | 3 | Only with `--skip-unread`: the row shows unread messages; not opened. |
 | `UNREAD_UNVERIFIED` | 3 | Only with `--skip-unread`: the row could not be read completely, or the legacy path could not find it; not opened. |
 | `UNKNOWN_CHAT_ID` | 1 | The `chat_id` is not in the registry; run `kktcli chats`. |
+| `CHAT_ID_STALE` | 5 | The `chat_id` was retired: a scan could not tell its room apart from another one with the same name. Run `kktcli chats` and use the current chat_id. |
+| `CHAT_AMBIGUOUS` | 6 | Same-name rooms cannot be told apart for this `chat_id`; `details.candidates` lists title, preview, time and member count. |
 | `CHAT_NOT_IN_LIST` | 1 | No chat-list row matches (after list recovery, if any). |
 | `AMBIGUOUS_CHAT` | 1 | Several rows match a partial name equally well. |
 | `CHAT_LIST_UNAVAILABLE` | 1 | The main window shows no chat list (e.g. another tab). |
@@ -588,6 +616,7 @@ with a single error document.
 | `~/.config/kktcli/credentials/primary.key` | Local AES-GCM key. |
 | `~/.kktcli/chat-registry.json` | Synthetic chat identities and last seen rows. |
 | `~/.kktcli/ax-cache.json` | Cached AX paths. |
+| `~/.kktcli/messages/<chat_id>.jsonl` | Messages kept from reads (see [Local message store](#local-message-store)). |
 
 These files contain private data. Do not publish them or attach them to issues. kktcli
 never reads or writes `~/.kmsg` or `~/.config/kmsg`.
@@ -609,7 +638,7 @@ deletes them.
   so nothing is written outside it.
 - Each line has `chat_id`, `chat` (the room title at read time), `date`, `time` (`HH:MM` or
   null), `time_raw`, `author`, `side`, `kind`, `body`, `occurrence`, `edited`, `truncated`
-  and `saved_at` (ISO-8601); unknown values are null.
+  `image_count`, `attachment_count` and `saved_at` (ISO-8601); unknown values are null.
 - Duplicates: a line is added only when no stored line of that chat has the same `date`,
   `time`, `author`, `body` and `occurrence`. `occurrence` numbers identical messages (same
   date, time, author and body) within one read: 0, 1, 2, … So legitimate repeats survive:
@@ -629,6 +658,34 @@ text matches everything. `--since`/`--until` are inclusive (`YYYY-MM-DD` or
 (`(me)` is you), and `--limit` (default 50) keeps the newest hits by date, time, then save
 order. Text output is one line per hit, `date time author (chat): body`; `--json` prints
 `{"ok": true, "count": N, "results": [...], "store": "<dir>"}`.
+
+A read by name is kept only when that name belongs to exactly one known chat_id (otherwise
+`meta.store.skipped` says why); reads with `--chat-id` are always kept. `read --json`
+reports `meta.store` as `{"chat_id", "saved", "skipped"}` (null with `--no-save`).
+
+```bash
+kktcli export [--chat-id ID ...] [--since D] [--until D] [--author A] [--grep T] [--format md|json|csv] [--out FILE]
+```
+
+`kktcli export` also reads only the store. Markdown (default) groups by room and day:
+
+```markdown
+# 테스트방
+
+## 2026-11-26 (목)
+
+- 15:12 홍길동: 내일 3시 회의실 A
+  자료는 https://example.com/a
+- 15:20 나: [사진]
+```
+
+Long messages appear as kept (cut ones are labelled), attachments as `[사진]`, `[사진 N장]`
+or `[파일: name]`, system lines as `(알림) …`, links unchanged. `--chat-id` can be repeated
+and sets the order of the rooms; `--grep` also matches with spaces ignored. `--format json`
+prints `{"ok": true, "count": N, "messages": [...]}`; `--format csv` writes UTF-8 with a
+byte-order mark and CRLF lines (columns chat, chat_id, date, time, author, body, kind) so
+Excel on the Mac shows Korean. To turn an export into a one-page summary, see
+[`templates/방-요약.md`](templates/방-요약.md).
 
 `kktcli store clear` deletes every `<chat_id>.jsonl` in the store, or one chat's with
 `--chat-id` (other files and the directory stay); `--json` prints
@@ -701,4 +758,4 @@ python3 -m unittest discover -s tests -p "test_*.py"   # source contract tests
 
 `make test-core BUILD_PATH=<dir>` builds into another directory. The version comes from
 the `VERSION` file (`MAJOR.MINOR.PATCH`); `--version` prints it together with the
-upstream release, e.g. `0.1.0 (based on kmsg 1.260921.0)`.
+upstream release, e.g. `0.2.0 (based on kmsg 1.260921.0)`.

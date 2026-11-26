@@ -7,7 +7,7 @@ Guidance for coding agents working in this repository (also read as CLAUDE.md).
 ```bash
 swift build                      # debug
 swift build -c release           # release
-.build/debug/kktcli --version    # 0.1.0 (based on kmsg 1.260921.0)
+.build/debug/kktcli --version    # 0.2.0 (based on kmsg 1.260921.0)
 ```
 
 ## Test
@@ -37,11 +37,15 @@ use `send` or `send-image` in tests.
 ```
 Sources/kktcli/Commands       CLI commands (ArgumentParser)
 Sources/kktcli/KakaoTalk      chat list, opener, transcript reader, recovery, legacy resolver
+Sources/kktcli/Send           room session, send preview, confirmation, verified send
+Sources/kktcli/Store          local message store (~/.kktcli/messages)
 Sources/kktcli/Accessibility  AX wrappers, batched reads, input guard, permission
 Sources/KktcliCore            pure parsing / policy logic (unit tested)
 tests/KktcliCoreTests         Swift Testing unit tests
 tests/*.py                    contract tests
 skills/kktcli                 agent skill
+templates                     one-page digest templates (teams copy and edit)
+install.sh, make dist         release install (SHA-256 checked) and packaging
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
@@ -92,7 +96,11 @@ Chat window (title = room name; team, self and open chats drop the "팀채팅, "
   by hand; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`, exit status 3) and
   `--allow-unread` is a deprecated no-op. Keep `meta.unread_before`, `unread_after` and
   `marked_read` truthful (null when not checked).
+- chat_ids: never pair same-name rooms by position (`ChatIdentityAssignment`); a lookup
+  of one ID only refreshes that record (`ChatIdentityRegistryStore.refresh`).
 - Keep `read --json` output to exactly one JSON document on stdout.
+- Never put real room names, people's names or chat text in code, tests, docs or commit
+  messages; use placeholders such as 홍길동 or 테스트방.
 - Version: `VERSION` holds `MAJOR.MINOR.PATCH`.
 
 ## Commit convention
