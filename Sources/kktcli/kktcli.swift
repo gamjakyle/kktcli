@@ -62,6 +62,7 @@ struct Kktcli: ParsableCommand {
             CacheCommand.self,
             SearchCommand.self,
             ExportCommand.self,
+            ConfigCommand.self,
             StoreCommand.self,
             MCPServerCommand.self,
         ],

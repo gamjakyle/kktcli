@@ -62,15 +62,15 @@ struct MCPMappingTests {
         #expect(capped.timeout == 8 + 30 + 60 + 2)
     }
 
-    @Test("Send tools: preview by default, send waits for the dialog (at least 130 s)")
+    @Test("Send tools: preview by default; send without a dialog")
     func sendRequests() {
         let preview = MCPSendRequest(kind: .text, chatID: "chat_1", payload: "내일 3시 회의실 A")
         #expect(preview.arguments == ["send", "--chat-id", "chat_1", "내일 3시 회의실 A", "--json", "--preview"])
         #expect(preview.timeout == 20 + 30)
         let send = MCPSendRequest(kind: .text, chat: "테스트방", payload: "확인했어요", mode: .send, waitForIdleSeconds: 0)
         #expect(send.arguments == ["send", "테스트방", "확인했어요", "--json", "--wait-for-idle", "0"])
-        #expect(send.timeout == 130)
-        #expect(MCPSendRequest(kind: .text, payload: "a", mode: .send).timeout >= MCPSendRequest.minimumSendTimeout)
+        #expect(send.timeout == 40)
+        #expect(MCPSendRequest(kind: .text, payload: "a", mode: .send).timeout == 40 + 30)
         let image = MCPSendRequest(kind: .image, chatID: "chat_2", payload: "/tmp/a.png", mode: .send, allowActivate: true)
         #expect(image.arguments == ["send-image", "--chat-id", "chat_2", "/tmp/a.png", "--json", "--allow-activate"])
         #expect(MCPSendRequest.mode(from: nil) == .preview)

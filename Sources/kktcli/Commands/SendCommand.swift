@@ -5,23 +5,24 @@ import KktcliCore
 struct SendCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "send",
-        abstract: "Send one message to one chat, after you confirm it in a dialog",
+        abstract: "Send one message to one chat (off unless enabled; preview first)",
         discussion: """
             kktcli send --chat-id <chat-id> <message> [--preview]
             kktcli send <chat> <message> [--preview]
 
-            --preview (alias --dry-run) sends nothing. It opens the room the way 'read' does and
-            prints who the message goes to (title, kind, member count, chat_id, chat-list preview
-            and time), the last 3 messages, a warning when other rooms share the name, the exact
-            text with its line and character counts, and how it would be sent.
+            Sending is off by default: 'kktcli config set send on' enables it. While it is off,
+            everything but --preview fails with SEND_DISABLED (exit status 9).
 
-            Without --preview the same room is opened and a macOS confirmation dialog shows the
-            room, its last messages and the full text. 취소 is the default (Return and Esc
-            cancel); 보내기 counts only for a real mouse click after 1 s; the dialog cancels by
-            itself after 120 s (SEND_CANCELLED, exit status 7). No option skips the dialog.
-            After 보내기 the room is checked again, the text is put into the input box, the
-            room's own 전송 button is pressed once and the new bubble is verified (other
-            failures: exit status 8). One message per run; there is no batch send.
+            --preview (alias --dry-run) sends nothing, also while sending is off. It opens the room
+            the way 'read' does and prints who the message goes to (title, kind, member count,
+            chat_id, chat-list preview and time), the last 3 messages, a warning when other rooms
+            share the name, the exact text with its line and character counts, and how it would
+            be sent.
+
+            Without --preview the same room is opened, the text is put into the input box, the
+            room is checked again right before the room's own 전송 button is pressed once, and the
+            new bubble is verified (failures: exit status 8). One message per run; there is no
+            batch send.
             """
     )
 
@@ -81,7 +82,18 @@ struct SendCommand: ParsableCommand {
     }
 
     func run() throws {
-        let report = withStdoutRedirectedToStderr(json) { perform(SendText.exact(message)) }
+        let report = withStdoutRedirectedToStderr(json) { () -> SendReport in
+            if !isPreview {
+                do {
+                    try ConfigStore.requireSendEnabled()
+                } catch let failure as ReadFailure {
+                    return SendOutput.failureReport(failure, mode: "send")
+                } catch {
+                    return SendOutput.failureReport(ReadFailure(code: "SEND_FAILED", message: "\(error)"), mode: "send")
+                }
+            }
+            return perform(SendText.exact(message))
+        }
         SendOutput.print(report, json: json)
         if let code = SendOutput.exitCode(report) {
             throw ExitCode(code)
@@ -120,35 +132,7 @@ struct SendCommand: ParsableCommand {
                 return report
             }
 
-            let dialog = SendConfirmationDialog(log: { room.runner.log($0) })
-            let outcome = dialog.run(SendOutput.dialogContent(preview))
-            guard outcome == .send else {
-                report.cancelled = true
-                report.window = room.close(window, keep: keepWindow)
-                let reason: String
-                switch outcome {
-                case .timedOut: reason = "timed out after \(Int(SendDialogPolicy.timeout)) s"
-                case .unavailable(let why): reason = "the dialog could not be shown (\(why))"
-                default: reason = "cancelled"
-                }
-                report.error = .init(code: "SEND_CANCELLED", message: "Not sent: \(reason).", hint: nil)
-                return report
-            }
-
-            // The same window, the same room, and nothing new since the dialog was shown.
-            guard room.stillShows(window) else {
-                throw MessageSender.failure("SEND_TARGET_CHANGED", "The chat window closed or changed while the dialog was open; nothing was sent.")
-            }
             let now = room.tail(of: window.window, limit: 3, justOpened: false)
-            switch SendVerification.compareTail(before: tail.suffix(3).map(SendVerification.Key.init(item:)), now: now.suffix(3).map(SendVerification.Key.init(item:))) {
-            case .same:
-                break
-            case .grown(let newer):
-                throw MessageSender.failure("SEND_CONTEXT_CHANGED", "\(newer) new message(s) arrived while the dialog was open; nothing was sent.", hint: "Run the preview again to see them.")
-            case .different:
-                throw MessageSender.failure("SEND_TARGET_CHANGED", "The room's last messages no longer match what the dialog showed; nothing was sent.")
-            }
-
             let sent = try MessageSender(session: room, allowActivate: allowActivate).send(text, in: window, tailBefore: now)
             report.ok = true
             report.sent = true
@@ -176,24 +160,16 @@ struct SendCommand: ParsableCommand {
 
 /// Shared output of `send` and `send-image`.
 enum SendOutput {
-    static func dialogContent(_ preview: SendPreview) -> SendConfirmationDialog.Content {
-        let members = preview.memberCount.map { ", \($0)명" } ?? ""
-        var context = ["방: \(preview.title) (\(preview.kind.rawValue)\(members))" + (preview.chatID.map { " · \($0)" } ?? "")]
-        if !preview.lastMessages.isEmpty {
-            context.append("최근 메시지:")
-            context += preview.lastMessages.map { "  \($0.time ?? "-") \($0.author ?? "?"): \($0.body.replacingOccurrences(of: "\n", with: " "))" }
-        }
-        return .init(
-            heading: "이 메시지를 \(preview.title)에 보낼까요? (\(preview.lines)줄, \(preview.characters)자)",
-            context: context.joined(separator: "\n"),
-            text: preview.text,
-            checks: preview.checks
-        )
+    static func failureReport(_ failure: ReadFailure, mode: String) -> SendReport {
+        var report = SendReport(mode: mode)
+        report.error = .init(code: failure.code, message: failure.message, hint: failure.hint)
+        report.details = failure.details
+        report.details["exit_status"] = String(failure.exitCode)
+        return report
     }
 
     static func exitCode(_ report: SendReport) -> Int32? {
-        guard let error = report.error else { return nil }
-        if error.code == "SEND_CANCELLED" { return KktcliExitStatus.sendCancelled }
+        guard report.error != nil else { return nil }
         return Int32(report.details["exit_status"] ?? "") ?? 1
     }
 
@@ -216,7 +192,7 @@ enum SendOutput {
             Swift.print("File:    \(file)")
         }
         if let error = report.error {
-            Swift.print(error.code == "SEND_CANCELLED" ? "Not sent: \(error.message)" : "Could not send: [\(error.code)] \(error.message)")
+            Swift.print("Could not send: [\(error.code)] \(error.message)")
             if let hint = error.hint { Swift.print("Hint: \(hint)") }
         } else if report.mode == "preview" {
             Swift.print("Preview only: nothing was sent.")

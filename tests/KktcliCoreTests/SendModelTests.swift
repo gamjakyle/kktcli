@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import KktcliCore
 
-@Suite("Send: exact text, preview, confirmation dialog, verification")
+@Suite("Send: exact text, preview, setting, verification")
 struct SendModelTests {
     @Test("The exact text: line endings unified, trailing whitespace removed, nothing added")
     func exactText() {
@@ -38,18 +38,6 @@ struct SendModelTests {
         #expect(SendPreview.checks(text: "안녕", sameNameRows: 0).isEmpty)
     }
 
-    @Test("Dialog: Return, Esc, 취소 and timeout cancel; 보내기 only by mouse after 1 s")
-    func dialog() {
-        #expect(SendDialogPolicy.decide(.returnKey, elapsed: 5) == .cancel)
-        #expect(SendDialogPolicy.decide(.escapeKey, elapsed: 5) == .cancel)
-        #expect(SendDialogPolicy.decide(.cancelButton, elapsed: 0) == .cancel)
-        #expect(SendDialogPolicy.decide(.timeout, elapsed: 120) == .timedOut)
-        #expect(SendDialogPolicy.decide(.sendButton(mouseEvent: true), elapsed: 0.5) == .ignore)
-        #expect(SendDialogPolicy.decide(.sendButton(mouseEvent: false), elapsed: 10) == .ignore)
-        #expect(SendDialogPolicy.decide(.sendButton(mouseEvent: true), elapsed: 1.0) == .send)
-        #expect(SendDialogPolicy.timeout == 120)
-    }
-
     @Test("Only the chat window's own 전송 button is exempt; 전송 메뉴 and menu items are not")
     func sendButton() {
         #expect(SendButtonSafety.isSendButton(role: "AXButton", title: "전송", description: nil))
@@ -60,15 +48,19 @@ struct SendModelTests {
         #expect(MenuItemSafety.isBlocked(title: "전송", description: nil, identifier: nil))
     }
 
-    @Test("Tail re-check: same, grown, different")
-    func tail() {
-        let a = SendVerification.Key(author: "홍길동", time: "15:01", body: "a")
-        let b = SendVerification.Key(author: "(me)", time: "15:02", body: "b")
-        let c = SendVerification.Key(author: "홍길동", time: "15:03", body: "c")
-        #expect(SendVerification.compareTail(before: [a, b], now: [a, b]) == .same)
-        #expect(SendVerification.compareTail(before: [a, b], now: [a, b, c]) == .grown(1))
-        #expect(SendVerification.compareTail(before: [a, b], now: [b, c]) == .different)
-        #expect(SendVerification.compareTail(before: [a, b], now: [c]) == .different)
+    @Test("Sending is off by default; config get/set send on|off")
+    func config() throws {
+        #expect(KktcliConfig.defaults.send == false)
+        #expect(KktcliConfig.decode(nil) == .defaults)
+        #expect(KktcliConfig.decode(Data("not json".utf8)) == .defaults)
+        #expect(KktcliConfig.decode(Data("{}".utf8)).send == false)
+        #expect(KktcliConfig.decode(Data(#"{"send":true}"#.utf8)).send == true)
+        let on = try KktcliConfig.defaults.setting("send", to: "ON")
+        #expect(try on.value(of: "send") == "on")
+        #expect(try on.setting("send", to: "off").send == false)
+        #expect(throws: KktcliConfig.ValueError.invalidValue(key: "send", value: "yes")) { try KktcliConfig.defaults.setting("send", to: "yes") }
+        #expect(throws: KktcliConfig.ValueError.unknownKey("dialog")) { try KktcliConfig.defaults.value(of: "dialog") }
+        #expect(KktcliExitStatus.sendDisabled == 9)
     }
 
     @Test("Bubble verification: a new outgoing bubble with the exact text at the end")

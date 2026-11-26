@@ -2,7 +2,7 @@ import Foundation
 
 /// The exact text of a send.
 public enum SendText {
-    /// What is shown in the preview and the dialog, put into the input and verified in the
+    /// What is shown in the preview, put into the input and verified in the
     /// bubble: line endings as "\n", trailing whitespace and newlines removed. No footer or
     /// anything else is ever added.
     public static func exact(_ text: String) -> String {
@@ -36,7 +36,7 @@ public enum RoomKind: String, Codable, Sendable {
     }
 }
 
-/// One message line in the preview and the confirmation dialog.
+/// One message line in the send preview.
 public struct SendContextMessage: Codable, Equatable, Sendable {
     public var author: String?
     public var time: String?
@@ -56,7 +56,7 @@ public struct SendContextMessage: Codable, Equatable, Sendable {
     }
 }
 
-/// What `send --preview` prints and the confirmation dialog shows.
+/// What `send --preview` prints.
 public struct SendPreview: Codable, Equatable, Sendable {
     public var title: String
     public var kind: RoomKind
@@ -156,44 +156,7 @@ public struct SendPreview: Codable, Equatable, Sendable {
     }
 }
 
-/// The confirmation dialog's rules: 취소 is the default (Return and Esc cancel); 보내기 has no
-/// key equivalent, works only after `enableDelay`, and only for a real mouse click (an
-/// AXPress or a key press activates it with no mouse event and is ignored). It cancels by
-/// itself after `timeout`.
-public enum SendDialogPolicy {
-    public static let enableDelay: Double = 1.0
-    public static let timeout: Double = 120
-
-    public enum Trigger: Equatable, Sendable {
-        case cancelButton
-        case escapeKey
-        case returnKey
-        case timeout
-        /// 보내기 was activated; `mouseEvent` tells whether the current event was a mouse click.
-        case sendButton(mouseEvent: Bool)
-    }
-
-    public enum Decision: Equatable, Sendable {
-        case send
-        case cancel
-        case timedOut
-        /// Not a decision: the activation is ignored and the dialog stays open.
-        case ignore
-    }
-
-    public static func decide(_ trigger: Trigger, elapsed: Double) -> Decision {
-        switch trigger {
-        case .cancelButton, .escapeKey, .returnKey:
-            return .cancel
-        case .timeout:
-            return .timedOut
-        case .sendButton(let mouseEvent):
-            return mouseEvent && elapsed >= enableDelay ? .send : .ignore
-        }
-    }
-}
-
-/// Re-verification of the room after the confirmation, and of the sent bubble.
+/// Verification of the sent bubble.
 public enum SendVerification {
     public struct Key: Equatable, Sendable {
         public var author: String?
@@ -211,25 +174,6 @@ public enum SendVerification {
             self.time = time
             self.body = body
         }
-    }
-
-    public enum TailComparison: Equatable, Sendable {
-        case same
-        /// The earlier tail is still there, followed by this many newer messages.
-        case grown(Int)
-        case different
-    }
-
-    /// `before`: the tail shown in the dialog; `now`: the transcript tail read again.
-    public static func compareTail(before: [Key], now: [Key]) -> TailComparison {
-        if before == now { return .same }
-        guard !before.isEmpty else { return now.isEmpty ? .same : .grown(now.count) }
-        guard now.count >= before.count else { return .different }
-        for start in stride(from: now.count - before.count, through: 0, by: -1) where Array(now[start..<(start + before.count)]) == before {
-            let newer = now.count - (start + before.count)
-            return newer == 0 ? .same : .grown(newer)
-        }
-        return .different
     }
 
     /// True when the transcript now ends with an outgoing bubble showing `text` that was not

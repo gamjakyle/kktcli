@@ -3,7 +3,7 @@ import ApplicationServices.HIServices
 import Foundation
 import KktcliCore
 
-/// Puts the confirmed text into the open chat window's input (`_NS:51`) with AXValue, checks
+/// Puts the text into the open chat window's input (`_NS:51`) with AXValue, checks
 /// it, and presses the window's own "전송" button (`SendButtonSafety`) once; then checks that
 /// a new outgoing bubble with that text appears. Nothing else is pressed. When the button
 /// stays missing or disabled the input is cleared again and nothing is sent, unless
@@ -47,10 +47,11 @@ struct MessageSender {
             )
         }
 
-        // Re-verified right before the press: the input still holds exactly the text and the
-        // button is still the enabled 전송 button.
+        // Re-verified right before the press: the same window still shows the same room, the
+        // input still holds exactly the text and the button is still the enabled 전송 button.
         let node = AXNodeReader.read(button).snapshot
-        guard SendText.exact(currentValue(input)) == text,
+        guard session.stillShows(opened),
+              SendText.exact(currentValue(input)) == text,
               SendButtonSafety.isSendButton(role: node.role, title: node.title, description: node.desc),
               AXNodeReader.boolAttribute(button, kAXEnabledAttribute) == true
         else {

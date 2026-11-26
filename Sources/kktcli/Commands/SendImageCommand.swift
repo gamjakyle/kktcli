@@ -6,16 +6,16 @@ import KktcliCore
 struct SendImageCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "send-image",
-        abstract: "Send one image to one chat, after you confirm it in a dialog",
+        abstract: "Send one image to one chat (off unless enabled; preview first)",
         discussion: """
             kktcli send-image <chat> <image> [--preview]
             kktcli send-image --chat-id <chat-id> <image> [--preview]
 
-            Opens the room the way 'read' does and shows the same confirmation dialog as 'send'
-            (room, last messages, file name and size). Pasting needs KakaoTalk in front, so it is
-            brought to the front only after 보내기 was clicked. The clipboard is saved before the
-            image is put on it and restored afterwards, and the app that was in front before is
-            brought back.
+            Like 'send': off unless 'kktcli config set send on' (SEND_DISABLED, exit status 9);
+            --preview always works and shows the room, its last messages and the file. Pasting
+            needs KakaoTalk in front, so it is brought to the front only for the paste; the
+            clipboard is saved before the image is put on it and restored afterwards, and the app
+            that was in front before is brought back.
             """
     )
 
@@ -61,7 +61,18 @@ struct SendImageCommand: ParsableCommand {
     }
 
     func run() throws {
-        let report = withStdoutRedirectedToStderr(json) { perform() }
+        let report = withStdoutRedirectedToStderr(json) { () -> SendReport in
+            if !preview {
+                do {
+                    try ConfigStore.requireSendEnabled()
+                } catch let failure as ReadFailure {
+                    return SendOutput.failureReport(failure, mode: "send")
+                } catch {
+                    return SendOutput.failureReport(ReadFailure(code: "SEND_FAILED", message: "\(error)"), mode: "send")
+                }
+            }
+            return perform()
+        }
         SendOutput.print(report, json: json)
         if let code = SendOutput.exitCode(report) {
             throw ExitCode(code)
@@ -89,7 +100,7 @@ struct SendImageCommand: ParsableCommand {
             let window = try room.open(located)
             opened = window
             let tail = room.tail(of: window.window, limit: 3, justOpened: window.openedByUs)
-            let method = "chat_list_menu + paste (KakaoTalk brought to the front after 보내기) + sheet 전송"
+            let method = "chat_list_menu + paste (KakaoTalk brought to the front for it) + sheet 전송"
             let summary = SendPreview(
                 title: located.row.title,
                 memberCount: located.row.summary.memberCount,
@@ -109,23 +120,10 @@ struct SendImageCommand: ParsableCommand {
                 return report
             }
 
-            var content = SendOutput.dialogContent(summary)
-            content.heading = "이 이미지를 \(summary.title)에 보낼까요?"
-            let outcome = SendConfirmationDialog(log: { room.runner.log($0) }).run(content)
-            guard outcome == .send else {
-                report.cancelled = true
-                report.window = room.close(window, keep: keepWindow)
-                report.error = .init(code: "SEND_CANCELLED", message: outcome == .timedOut ? "Not sent: timed out." : "Not sent: cancelled.", hint: nil)
-                return report
-            }
             guard room.stillShows(window) else {
-                throw MessageSender.failure("SEND_TARGET_CHANGED", "The chat window closed or changed while the dialog was open; nothing was sent.")
+                throw MessageSender.failure("SEND_TARGET_CHANGED", "The chat window closed or changed; nothing was sent.")
             }
             let now = room.tail(of: window.window, limit: 3, justOpened: false)
-            if SendVerification.compareTail(before: tail.suffix(3).map(SendVerification.Key.init(item:)), now: now.suffix(3).map(SendVerification.Key.init(item:))) != .same {
-                throw MessageSender.failure("SEND_CONTEXT_CHANGED", "The room changed while the dialog was open; nothing was sent.", hint: "Run the preview again.")
-            }
-
             let verified = try ImagePaster(session: room).paste(image, into: window, tailBefore: now)
             report.ok = true
             report.sent = true

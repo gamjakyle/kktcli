@@ -257,7 +257,7 @@ private final class KktcliMCPServer {
                         "name": "kktcli",
                         "version": serverVersion,
                     ],
-                    "instructions": "Use kktcli_read for read-only operations. It opens rooms with unread messages like any other, which sends read receipts exactly as opening them by hand; pass skip_unread=true to leave such rooms unopened (UNREAD_REFUSED). While the user is busy in KakaoTalk it waits (KAKAOTALK_IN_USE after wait_for_idle); it never brings KakaoTalk to the front unless allow_activate=true (MAIN_WINDOW_NOT_VISIBLE otherwise). Sending: draft concisely, keep dates, times, places, amounts, links and asks verbatim, drop greetings, background and repetition and tell the user what you dropped, never add facts, at most 3 lines unless the user asked for more. Always call kktcli_send (or kktcli_send_image) with mode=preview first, show the user the preview (recipient, last messages, exact text) and wait for their explicit 보내 before calling it again with mode=send; the user then confirms once more in a dialog on their screen. One message per call; never send in bulk; never retry a send whose result is uncertain without reading the room first.",
+                    "instructions": "Use kktcli_read for read-only operations. It opens rooms with unread messages like any other, which sends read receipts exactly as opening them by hand; pass skip_unread=true to leave such rooms unopened (UNREAD_REFUSED). While the user is busy in KakaoTalk it waits (KAKAOTALK_IN_USE after wait_for_idle); it never brings KakaoTalk to the front unless allow_activate=true (MAIN_WINDOW_NOT_VISIBLE otherwise). Sending is off unless the user turned it on with kktcli config set send on; never enable it on your own, and the send tools are listed only while it is on. When sending: draft concisely, keep dates, times, places, amounts, links and asks verbatim, drop greetings, background and repetition and tell the user what you dropped, never add facts, at most 3 lines unless the user asked for more. Always call kktcli_send (or kktcli_send_image) with mode=preview first, show the user the preview (recipient, last messages, exact text) and wait for their explicit 보내 before calling it again with mode=send. One message per call; never send in bulk; never retry a send whose result is uncertain without reading the room first. To summarise chats, prefer the Markdown of kktcli export (about 5x fewer tokens than read JSON).",
                     "meta": [
                         "startup_check": startupCheck,
                     ],
@@ -382,15 +382,21 @@ private final class KktcliMCPServer {
                     "additionalProperties": false,
                 ],
             ],
+        ] + (ConfigStore.load().send ? sendToolDefinitions() : [])
+    }
+
+    /// Offered only while sending is on (`kktcli config set send on`).
+    private func sendToolDefinitions() -> [[String: Any]] {
+        [
             sendToolDefinition(
                 name: "kktcli_send",
-                description: "Send one KakaoTalk text message, only ever after the user saw it. mode=preview (the default) sends nothing: it opens the room like kktcli_read and returns who it goes to (title, kind, members, chat_id), the last 3 messages, a same-name warning and the exact text with line and character counts. mode=send shows a confirmation dialog on the user's screen (room, last messages, full text; 취소 is the default; 보내기 needs a real mouse click) and waits up to 120 s for it; the result reports sent, cancelled and bubble_verified. Call mode=send only after the user saw the preview and explicitly said 보내.",
+                description: "Send one KakaoTalk text message, only ever after the user saw it. mode=preview (the default) sends nothing: it opens the room like kktcli_read and returns who it goes to (title, kind, members, chat_id), the last 3 messages, a same-name warning and the exact text with line and character counts. mode=send sends it: the room is checked again right before its own 전송 button is pressed once, and the new bubble is verified; the result reports sent and bubble_verified. Call mode=send only after the user saw the preview and explicitly said 보내.",
                 payloadKey: "message",
                 payloadDescription: "The exact message text (at most 3 lines unless the user asked for more)"
             ),
             sendToolDefinition(
                 name: "kktcli_send_image",
-                description: "Send one image to a KakaoTalk chat, only ever after the user saw it. mode=preview (the default) sends nothing; mode=send shows the same confirmation dialog (room, last messages, file name and size) and waits for it. The clipboard is restored afterwards.",
+                description: "Send one image to a KakaoTalk chat, only ever after the user saw it. mode=preview (the default) sends nothing; mode=send pastes it (KakaoTalk comes to the front for the paste) and verifies the bubble. The clipboard and the previous front app are restored afterwards.",
                 payloadKey: "image_path",
                 payloadDescription: "Absolute path to a local image file"
             ),
@@ -626,6 +632,16 @@ private final class KktcliMCPServer {
     }
 
     private func callSendTool(_ arguments: JSONDict, kind: MCPSendRequest.Kind, payloadKey: String) -> JSONDict {
+        guard ConfigStore.load().send else {
+            return errorPayload(
+                code: "SEND_DISABLED",
+                message: "Sending is off in kktcli; nothing was sent.",
+                hint: "Never enable it on your own. Only if the user asks: kktcli config set send on",
+                rawStdout: "",
+                rawStderr: "",
+                latencyMs: 0
+            )
+        }
         let chat = (arguments["chat"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let chatID = (arguments["chat_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let payload = (arguments[payloadKey] as? String) ?? ""

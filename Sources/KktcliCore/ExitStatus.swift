@@ -9,10 +9,10 @@ public enum KktcliExitStatus {
     public static let staleChatID: Int32 = 5
     /// CHAT_AMBIGUOUS: same-name rooms cannot be told apart for this chat_id.
     public static let ambiguousChatID: Int32 = 6
-    /// SEND_CANCELLED: the confirmation was cancelled or timed out; nothing was sent.
-    public static let sendCancelled: Int32 = 7
-    /// SEND_UNVERIFIED and other send failures after the confirmation: see the code.
+    /// SEND_UNVERIFIED and the other failures once a send started: see the code.
     public static let sendUnverified: Int32 = 8
+    /// SEND_DISABLED: sending is off (`kktcli config set send on` turns it on).
+    public static let sendDisabled: Int32 = 9
     /// Invalid arguments (EX_USAGE).
     public static let usage: Int32 = 64
     /// KAKAOTALK_IN_USE (EX_TEMPFAIL).

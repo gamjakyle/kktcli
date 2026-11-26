@@ -240,8 +240,8 @@ public enum MCPErrorMapping {
 }
 
 /// How the MCP tools `kktcli_send` / `kktcli_send_image` turn their arguments into a
-/// `kktcli send` / `send-image` invocation. `mode` "preview" (the default) never sends;
-/// "send" opens the confirmation dialog on the user's screen and waits for it.
+/// `kktcli send` / `send-image` invocation. `mode` "preview" (the default) never sends; "send"
+/// sends (the tools exist only while sending is on).
 public struct MCPSendRequest: Equatable, Sendable {
     public enum Kind: String, Sendable {
         case text
@@ -253,8 +253,7 @@ public struct MCPSendRequest: Equatable, Sendable {
         case send
     }
 
-    /// The dialog cancels itself after 120 s; the call waits at least this long.
-    public static let minimumSendTimeout: Double = 130
+    public static let sendTimeout: Double = 40
     public static let previewTimeout: Double = 20
 
     public var kind: Kind
@@ -321,11 +320,11 @@ public struct MCPSendRequest: Equatable, Sendable {
         return arguments
     }
 
-    /// Preview: 20 s; send: at least 130 s (the dialog's 120 s plus margin). Both are extended
-    /// by the wait for an idle user.
+    /// Preview: 20 s; send: 40 s (open, put the text in, press 전송, verify the bubble). Both are
+    /// extended by the wait for an idle user.
     public var timeout: Double {
         let wait = Self.bounded(waitForIdleSeconds ?? UserActivityPolicy.defaultWaitSeconds)
-        return (mode == .send ? Self.minimumSendTimeout : Self.previewTimeout) + wait
+        return (mode == .send ? Self.sendTimeout : Self.previewTimeout) + wait
     }
 
     private static func format(_ seconds: Double) -> String {

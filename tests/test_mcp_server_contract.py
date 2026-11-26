@@ -53,7 +53,7 @@ class MCPServerContractTests(unittest.TestCase):
         self.assertIn("deepRecoveryTimeout: Double = 15", mapping)
         self.assertIn("timeoutSec: request.timeout", source)
 
-    def test_send_tools_preview_by_default_and_never_send_without_the_dialog(self) -> None:
+    def test_send_tools_are_off_by_default_and_preview_first(self) -> None:
         source = MCP_SERVER_COMMAND.read_text(encoding="utf-8")
         mapping = MCP_MAPPING.read_text(encoding="utf-8")
         self.assertNotIn('"confirm"', source)
@@ -63,10 +63,13 @@ class MCPServerContractTests(unittest.TestCase):
         self.assertIn("MCPSendRequest.mode(from: arguments[\"mode\"] as? String)", source)
         for key in ('"sent": report.sent', '"cancelled": report.cancelled', '"bubble_verified": report.bubbleVerified'):
             self.assertIn(key, source)
-        self.assertIn("public static let minimumSendTimeout: Double = 130", mapping)
+        self.assertIn("public static let sendTimeout: Double = 40", mapping)
+        # The send tools exist only while sending is on; calling them anyway is refused.
+        self.assertIn("] + (ConfigStore.load().send ? sendToolDefinitions() : [])", source)
+        self.assertLess(source.index('code: "SEND_DISABLED"'), source.index("let run = runner.run(request.arguments, timeoutSec: request.timeout)"))
         self.assertIn('if mode == .preview { arguments.append("--preview") }', mapping)
         # The drafting rules and the explicit 보내 are in the server instructions.
-        for text in ("verbatim", "never add facts", "at most 3 lines", "mode=preview first", "explicit 보내", "never send in bulk"):
+        for text in ("verbatim", "never add facts", "at most 3 lines", "mode=preview first", "explicit 보내", "never send in bulk", "never enable it on your own", "kktcli export"):
             self.assertIn(text, source)
 
     def test_read_errors_keep_the_codes_kktcli_reports(self) -> None:
