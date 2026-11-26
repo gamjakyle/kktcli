@@ -60,6 +60,8 @@ struct Kktcli: ParsableCommand {
             ReadCommand.self,
             WatchCommand.self,
             CacheCommand.self,
+            SearchCommand.self,
+            StoreCommand.self,
             MCPServerCommand.self,
         ],
         defaultSubcommand: StatusCommand.self

@@ -592,6 +592,51 @@ with a single error document.
 These files contain private data. Do not publish them or attach them to issues. kktcli
 never reads or writes `~/.kmsg` or `~/.config/kmsg`.
 
+## Local message store
+
+Successful reads keep what they read, so it can be searched later without KakaoTalk:
+`read` (unless run with `--no-save`) and `watch --read` append the messages and system
+lines they read to `~/.kktcli/messages/<chat_id>.jsonl`, one JSON object per line.
+
+**The store holds chat content in plain text on this Mac.** The directory is created with
+mode `0700` and each file with `0600` (wider modes are narrowed on the next save), so other
+user accounts cannot read it, but anything running as you (backups, sync tools, other
+programs) can. Do not publish these files or attach them to issues; `kktcli store clear`
+deletes them.
+
+- `KKTCLI_STORE_DIR=<dir>` uses `<dir>` instead of `~/.kktcli/messages` (tests use a
+  temporary directory). Only `chat_id`s made of letters, digits, `_` and `-` are accepted,
+  so nothing is written outside it.
+- Each line has `chat_id`, `chat` (the room title at read time), `date`, `time` (`HH:MM` or
+  null), `time_raw`, `author`, `side`, `kind`, `body`, `occurrence`, `edited`, `truncated`
+  and `saved_at` (ISO-8601); unknown values are null.
+- Duplicates: a line is added only when no stored line of that chat has the same `date`,
+  `time`, `author`, `body` and `occurrence`. `occurrence` numbers identical messages (same
+  date, time, author and body) within one read: 0, 1, 2, … So legitimate repeats survive:
+  if a read shows three identical "ㅋㅋ" in one minute while two are stored, one is added;
+  a later read that shows only one of them adds nothing. A message read once without its
+  date, time or author and later with them is stored twice.
+
+```bash
+kktcli search <text> [--chat-id ID] [--since D] [--until D] [--author A] [--limit N] [--json]
+kktcli store clear [--chat-id ID] [--json]
+```
+
+`kktcli search` reads only the store, never KakaoTalk. `<text>` matches the body
+case-insensitively, also with spaces ignored (`"안녕 하세요"` finds `안녕하세요`); an empty
+text matches everything. `--since`/`--until` are inclusive (`YYYY-MM-DD` or
+`YYYY-MM-DDTHH:MM`), `--author` matches a name exactly or as a case-insensitive part
+(`(me)` is you), and `--limit` (default 50) keeps the newest hits by date, time, then save
+order. Text output is one line per hit, `date time author (chat): body`; `--json` prints
+`{"ok": true, "count": N, "results": [...], "store": "<dir>"}`.
+
+`kktcli store clear` deletes every `<chat_id>.jsonl` in the store, or one chat's with
+`--chat-id` (other files and the directory stay); `--json` prints
+`{"ok": true, "removed": N, "chat_ids": [...], "store": "<dir>"}`. With `--json`, errors are
+`{"ok": false, "error": {"code", "message", "hint"}}`: `INVALID_ARGUMENT` (exit 64) for a bad
+`--chat-id`, date or `--limit`; `STORE_READ_FAILED` or `STORE_CLEAR_FAILED` (exit 1) when the
+store cannot be read or removed.
+
 ## Troubleshooting
 
 ### Accessibility permission is not granted
