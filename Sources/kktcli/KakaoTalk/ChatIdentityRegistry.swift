@@ -135,6 +135,11 @@ final class ChatIdentityRegistryStore: @unchecked Sendable {
         )
     }
 
+    /// Every chat_id that is not retired.
+    func activeChatIDs() -> Set<String> {
+        Set(loadDocument().records.filter { !$0.isRetired }.map(\.chatID))
+    }
+
     func record(for chatID: String) -> ChatIdentityRecord? {
         let document = loadDocument()
         return document.records.first(where: { $0.chatID == chatID })
