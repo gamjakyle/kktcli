@@ -8,7 +8,7 @@ ENTRYPOINT = REPO_ROOT / "Sources" / "kktcli" / "kktcli.swift"
 MCP_SERVER_COMMAND = REPO_ROOT / "Sources" / "kktcli" / "Commands" / "MCPServerCommand.swift"
 CHAT_WINDOW_RESOLVER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "ChatWindowResolver.swift"
 MESSAGE_CONTEXT_RESOLVER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "MessageContextResolver.swift"
-TRANSCRIPT_READER = REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "TranscriptReader.swift"
+READ_OUTPUT = REPO_ROOT / "Sources" / "KktcliCore" / "ReadOutput.swift"
 
 
 class ReadBackgroundSafeContractTests(unittest.TestCase):
@@ -70,15 +70,19 @@ class ReadBackgroundSafeContractTests(unittest.TestCase):
         self.assertIn("background-safe mode; skipping chat window activation fallback", source)
 
     def test_transcript_message_json_exposes_media_metadata(self) -> None:
-        source = TRANSCRIPT_READER.read_text(encoding="utf-8")
+        # `read --json` messages come from KktcliCore's ReadMessageJSON (the kmsg-era
+        # TranscriptReader.swift, which defaulted a missing author to "(me)", is gone).
+        source = READ_OUTPUT.read_text(encoding="utf-8")
 
         self.assertIn('case hasImage = "has_image"', source)
         self.assertIn('case imageCount = "image_count"', source)
         self.assertIn('case linkCount = "link_count"', source)
         self.assertIn('case hasAttachment = "has_attachment"', source)
         self.assertIn('case attachmentCount = "attachment_count"', source)
-        self.assertIn("likelyMessageImageFrames", source)
-        self.assertIn("countURLTokens", source)
+        self.assertFalse((REPO_ROOT / "Sources" / "kktcli" / "KakaoTalk" / "TranscriptReader.swift").exists())
+        parser = (REPO_ROOT / "Sources" / "KktcliCore" / "TranscriptParser.swift").read_text(encoding="utf-8")
+        self.assertIn("static func countURLs(in text: String)", parser)
+        self.assertIn("AttachmentHeuristics.isAttachmentMetadata", parser)
 
 
 if __name__ == "__main__":
