@@ -40,6 +40,9 @@ struct InspectCommand: ParsableCommand {
     @Option(name: .long, help: "Row summary range start:end (inclusive, zero-based)")
     var rowRange: String?
 
+    @Flag(name: .long, help: "Bring KakaoTalk to the front when it shows no window on this desktop (may switch desktops)")
+    var allowActivate: Bool = false
+
     func run() throws {
         guard AccessibilityPermission.ensureGranted() else {
             AccessibilityPermission.printInstructions()
@@ -48,9 +51,15 @@ struct InspectCommand: ParsableCommand {
 
         let kakao = try KakaoTalkApp()
 
-        // Activate and wait for window if not visible
+        // kAXWindows lists only this desktop's windows. KakaoTalk is brought to the front (which
+        // may switch desktops and takes the user's typing) only with --allow-activate, as in
+        // every other command.
         var windows = kakao.windows
         if windows.isEmpty {
+            guard allowActivate else {
+                print("No KakaoTalk windows on this desktop; KakaoTalk was left as it is (pass --allow-activate to bring it to the front).")
+                throw ExitCode.failure
+            }
             print("No windows found, activating KakaoTalk...")
             _ = kakao.activateAndWaitForWindow(timeout: 3.0)
             windows = kakao.windows
