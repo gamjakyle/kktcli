@@ -7,7 +7,7 @@ Guidance for coding agents working in this repository (also read as CLAUDE.md).
 ```bash
 swift build                      # debug
 swift build -c release           # release
-.build/debug/kktcli --version    # 0.2.0 (based on kmsg 1.260921.0)
+.build/debug/kktcli --version    # 0.2.1 (based on kmsg 1.260921.0)
 ```
 
 ## Test
@@ -75,7 +75,9 @@ window closed: re-check before concluding a window is missing.
 
 Chat window (title = room name; team, self and open chats drop the "팀채팅, ",
 "나와의 채팅, ", "오픈채팅, " row prefix; open chats may have an EMPTY title):
-├── AXScrollArea _NS:32 > AXTable > AXRow (transcript)
+├── AXScrollArea _NS:32 > AXTable > AXRow (transcript; rows 380 pt wide in a default window:
+│   profile button 36 pt square 10 pt in, name 55 pt in, others' bubbles 60–65 pt in,
+│   mine end 18–23 pt before the right edge, meta left of mine and right of others')
 │   long message: AXTextArea value = first 500 chars + "…", then an AXButton with NO
 │   title/description/identifier right below it (35 pt tall) = 전체보기
 └── AXTextArea _NS:51 "메시지 입력"
@@ -119,6 +121,13 @@ Chat window (title = room name; team, self and open chats drop the "팀채팅, "
   a locked re-read-and-replace (`ChatIdentityRegistryFile.update`, `SharedFile`); never
   write back a document cached in memory.
 - Keep `read --json` output to exactly one JSON document on stdout.
+- Authors fail closed (`TranscriptParser`): `"(me)"` only on positive evidence, never as a
+  default. A header-less row's side comes from its own AXCell frame and its meta label (never
+  from a frame read at another moment); disagreement, or a break of KakaoTalk's grouping
+  (`resolveAuthors`), gives `side: unknown`, `author: null`. A sender name exists only in a
+  row with a profile button; other static texts (card titles) are content.
+- Commands that need every room (`chats`, `send`, `send-image`, `watch`) clear a query left in
+  the chat search field first (`ChatListRecoverer.clearLeftoverQuery`) or do nothing.
 - Never put real room names, people's names or chat text in code, tests, docs or commit
   messages; use placeholders such as 홍길동 or 테스트방.
 - Version: `VERSION` holds `MAJOR.MINOR.PATCH`.

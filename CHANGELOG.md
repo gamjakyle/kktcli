@@ -3,6 +3,43 @@
 All notable changes to kktcli. Versions follow `MAJOR.MINOR.PATCH` (see `VERSION`);
 breaking changes are marked **BREAKING**.
 
+## 0.2.1 — 2026-11-27
+
+### Authors
+- Fixed: other people's messages were attributed to `(me)`. A row without a name and without
+  a time label was judged by whether its bubble reached the right edge of a transcript frame
+  read when the window was found; when the window moved or resized before the rows were read
+  (seen live after `--legacy-open --all-history`), other people's continuation bubbles counted
+  as right aligned. In one room 38 of 499 messages were attributed to the reader. Each row is
+  now measured against its own AXCell frame, read together with its content, and the
+  transcript frame is no longer used at all.
+- `(me)` now needs positive evidence. The row's geometry and its time label must not disagree,
+  and every result is checked against KakaoTalk's grouping (the time label ends a sender's
+  group; another person's group after mine, a system line or a date separator starts with
+  their profile button). A contradiction gives `side: "unknown"` and `author: null` for the
+  rows involved instead of a guess.
+- Fixed: a static text inside a shared card (a song title) was taken for the sender's name,
+  turning the reader's own card into a message from someone named after the song. A sender
+  name now exists only in a row with a profile button (described "프로필", or an untitled
+  36 pt square at the row's top left corner).
+- Removed the unused kmsg-era `KakaoTalkTranscriptReader`, which defaulted a missing author to
+  `(me)`.
+
+### Chat list
+- Fixed: `read` failed with `CHAT_LIST_UNAVAILABLE` when a query left in the search field
+  filtered the chat list to a few rooms, one of them without messages; list recovery, which
+  would have cleared the query, never ran. A group room without messages (title and member
+  count only) now counts as a chat row, and on the 채팅 tab with a query in its search field a
+  filtered (even empty) table counts as the chat list.
+- `chats`, `send`, `send-image` and `watch` clear a query left in the search field before using
+  the list (same two presses as list recovery), so `chats` no longer lists only the matching
+  rooms and `send` never checks same-name rooms on a filtered list; otherwise they fail with
+  the new `CHAT_LIST_FILTERED` and do nothing.
+
+### Other
+- `inspect` no longer brings KakaoTalk to the front when it shows no window on this desktop;
+  pass `--allow-activate` for that, as with the other commands.
+
 ## 0.2.0 — 2026-11-26
 
 ### Chat IDs

@@ -19,7 +19,8 @@ class ProjectDocumentationTests(unittest.TestCase):
                 self.assertIn(UPSTREAM, readme)
                 self.assertIn("MIT", readme)
                 self.assertIn("skills/kktcli", readme)
-                self.assertIn("0.2.0 (based on kmsg 1.260921.0)", readme)
+                version = (path.parent / "VERSION").read_text(encoding="utf-8").strip()
+                self.assertIn(f"{version} (based on kmsg 1.260921.0)", readme)
 
     def test_korean_readme_has_safety_policy_and_results(self) -> None:
         readme = README_KO.read_text(encoding="utf-8")

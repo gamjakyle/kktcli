@@ -32,7 +32,7 @@ instead. It then prints the Accessibility steps. `make dist` builds the release 
 swift build -c release
 mkdir -p ~/.local/bin
 install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
-kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.1 (based on kmsg 1.260921.0)
 ```
 
 Make sure `~/.local/bin` is on `PATH`. kktcli has no self-update; install a newer release
@@ -99,7 +99,7 @@ and depend on stored credentials.
 ```bash
 kktcli
 kktcli --help
-kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.1 (based on kmsg 1.260921.0)
 kktcli -v
 ```
 
@@ -304,7 +304,13 @@ supported.
 
 **The chat list is checked first.** kktcli reads the main window's list as the chat list
 only when it is a table (the 친구 tab's list is an outline and never counts) and its first
-rows look like chat-list rows (title plus a time or a preview). On another tab (for example
+rows look like chat-list rows (title plus a time, a preview or a member count; a group room
+without messages shows only its member count). A query left in the search field of the 채팅
+tab filters the list; that filtered list (even an empty one) still counts as the chat list,
+so the wanted row is opened if it is shown and list recovery may clear the query otherwise.
+`chats`, `send`, `send-image` and `watch` need every room (`send` checks same-name rooms),
+so they first clear such a query with the same two presses as list recovery, or fail with
+`CHAT_LIST_FILTERED` and do nothing. On another tab (for example
 친구) it presses KakaoTalk's own 창 menu item 채팅 (⌘2) once, after the activity guard; only
 if that menu item is missing, the main window's `chatrooms` tab button instead (not yet
 tried live). It never presses 친구 or 더보기, and waits up to 2 s for the chat list
@@ -331,8 +337,15 @@ Recovery, only when the wanted row is missing:
   with `--deep-recovery` as well. Reported as `meta.main_window`.
 
 Message fields: `author` is `"(me)"` for your own messages and `null` when the sender
-cannot be established (system lines, banners); `side` is `me`, `other`, `unknown` or
-`system`. `date` comes from the transcript's date separators. KakaoTalk prints a time
+cannot be established (system lines, banners, and rows whose evidence disagrees); `side` is
+`me`, `other`, `unknown` or `system`. `"(me)"` needs positive evidence: a row without
+another person's profile button is measured against its own frame (my bubbles end at the
+right edge, other people's start at the left after the profile column) and against its time
+label (to the left of my bubbles, to the right of other people's); when the two disagree, or
+a row breaks KakaoTalk's grouping (another person's message without their profile button
+right after mine, a system line or a date separator), the rows involved get
+`side: "unknown"` and `author: null` instead of a guess. Static texts inside shared cards
+(a song title, say) are never taken for a sender's name. `date` comes from the transcript's date separators. KakaoTalk prints a time
 only on the last message of a same-author run, so earlier messages of the run take that
 time with `time_source: "inferred"`; messages with their own label have
 `time_source: "label"`.
@@ -444,6 +457,7 @@ kktcli inspect [options]
 | `--show-attributes`, `--show-path`, `--show-frame`, `--show-index`, `--show-flags`, `--show-actions` | Extra detail. |
 | `--debug-layout` | Path, frame, index and state together. |
 | `--row-summary`, `--row-range A:B` | Message-row parsing diagnostics. |
+| `--allow-activate` | Bring KakaoTalk to the front when it shows no window on this desktop (may switch desktops). Without it `inspect` fails and leaves KakaoTalk as it is. |
 
 ### `cache`
 
@@ -648,6 +662,7 @@ with a single error document.
 | `CHAT_NOT_IN_LIST` | 1 | No chat-list row matches (after list recovery, if any). |
 | `AMBIGUOUS_CHAT` | 1 | Several rows match a partial name equally well. |
 | `CHAT_LIST_UNAVAILABLE` | 1 | The main window does not show the chat list (another tab, e.g. 친구) and switching with 창 > 채팅 did not help or was not possible; nothing was read or recorded. |
+| `CHAT_LIST_FILTERED` | 1 | `chats`, `send`, `send-image` or `watch` found a query in the chat list's search field and could not clear it; nothing was done. Clear the search field and retry. |
 | `WINDOW_NOT_READY` | 1 | The main window could not be found or reopened. |
 | `MAIN_WINDOW_MINIMIZED`, `KAKAO_HIDDEN` | 1 | Restore KakaoTalk's window first. |
 | `MAIN_WINDOW_NOT_VISIBLE` | 1 | The main window was found neither on this nor on another desktop, and the window server shows a KakaoTalk window kktcli cannot reach (so it is not simply closed); nothing was pressed. Show KakaoTalk, or pass `--allow-activate`. |

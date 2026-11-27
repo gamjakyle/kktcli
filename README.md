@@ -71,7 +71,7 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 
 ## kmsg와 달라진 점
 
-| 영역 | kmsg 1.260921.0 | kktcli 0.2.0 |
+| 영역 | kmsg 1.260921.0 | kktcli 0.2.1 |
 |---|---|---|
 | 방 열기 | 행 선택 + Enter, 검색창 입력, 더블클릭(키·마우스 이벤트) | 채팅 목록 행의 메뉴 항목 **채팅방 열기**만 손쉬운 사용 동작으로 누름. 키 입력 없음, 카카오톡이 뒤에 있어도 동작 |
 | 안 읽은 방 | 그대로 열어 읽음 표시 전달 | 사람이 열 때처럼 열어 읽음 표시 전달, `--skip-unread`면 열지 않음(`UNREAD_REFUSED`), JSON에 열기 전후 안읽음 표시(`unread_before`·`unread_after`·`marked_read`) |
@@ -82,7 +82,7 @@ kktcli는 [channprj/kmsg](https://github.com/channprj/kmsg)(MIT 라이선스)를
 | 읽은 대화 보관·검색·내보내기 | 없음 | 읽은 메시지를 이 Mac에 보관(`~/.kktcli/messages`), `search`로 찾기, `export`로 마크다운·JSON·CSV 내보내기, 한 장 요약 틀 |
 | 여러 방 지켜보기 | 방 하나, 검색·Enter로 열기 | `watch --all`: 채팅 목록 위쪽 N개를 클릭·스크롤 없이 지켜보고 바뀐 방을 JSON 한 줄씩 알림, `--read`로 바뀐 방 읽기 |
 | `chats` 제목 | 안읽음 배지 문구가 방 제목으로 표시되는 경우 있음 | 제목 라벨(`_NS:40`)에서만 제목을 읽음, `has_unread`/`unread_count` 추가 |
-| 메시지 파싱 | `date`가 비고, 연속 메시지 시간이 앞 메시지 시간으로 채워짐 | 날짜 구분선으로 `date`, 연속 메시지 시간 추론(`time_source`: `label`/`inferred`), 보낸 사람 이어받기, 채널 배너를 `(me)`로 오인하지 않음 |
+| 메시지 파싱 | `date`가 비고, 연속 메시지 시간이 앞 메시지 시간으로 채워짐 | 날짜 구분선으로 `date`, 연속 메시지 시간 추론(`time_source`: `label`/`inferred`), 보낸 사람 이어받기, 채널 배너·남의 연속 메시지·공유 카드 제목을 `(me)`나 보낸 사람으로 오인하지 않음(증거가 엇갈리면 `author: null`) |
 | 이전 메시지 | 처음 로드된 행만 | 스크롤백(`--scrollback`, 시간 제한 있음) |
 | 긴 메시지 | 말풍선에 보이는 앞부분만, 잘렸다는 표시 없음 | 잘린 메시지 표시(`truncated`), `--full-text`로 전체 텍스트 가져오기(실험 단계) |
 | 창 닫기 | 첫 번째 버튼을 누르거나 Cmd+W | 창의 닫기 버튼만 누름, 없으면 열어 두고 알림 |
@@ -192,7 +192,7 @@ curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | 
 swift build -c release
 mkdir -p ~/.local/bin
 install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
-kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.1 (based on kmsg 1.260921.0)
 kktcli status      # 손쉬운 사용 권한, 카카오톡 실행·로그인 상태 확인
 ```
 

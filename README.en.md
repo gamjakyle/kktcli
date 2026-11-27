@@ -76,7 +76,7 @@ Please read this first.
 
 ## What changed from kmsg
 
-| Area | kmsg 1.260921.0 | kktcli 0.2.0 |
+| Area | kmsg 1.260921.0 | kktcli 0.2.1 |
 |---|---|---|
 | Opening a room | Row select + Enter, typing into search, double-click (key and mouse events) | Presses only the row's context-menu item **채팅방 열기** through Accessibility; no keystrokes, works with KakaoTalk in the background |
 | Unread rooms | Opened, which sends read receipts | Opened like by hand, which sends read receipts; `--skip-unread` leaves them unopened (`UNREAD_REFUSED`); JSON reports the badge before and after (`unread_before`, `unread_after`, `marked_read`) |
@@ -87,7 +87,7 @@ Please read this first.
 | Keeping, searching and exporting what was read | None | Read messages are kept on this Mac (`~/.kktcli/messages`); `search`; `export` to Markdown, JSON or CSV; a one-page digest template |
 | Watching many rooms | One room, opened by search and Enter | `watch --all`: watches the top N chat-list rows without clicking or scrolling and prints one JSON line per change; `--read` reads the changed rooms |
 | `chats` titles | Unread badge text could appear as the room title | Title read only from the title label (`_NS:40`); adds `has_unread` / `unread_count` |
-| Message parsing | `date` empty; unlabeled burst messages took the previous message's time | `date` from date separators, burst times inferred (`time_source`: `label` / `inferred`), sender carried forward, channel banners never attributed to `(me)` |
+| Message parsing | `date` empty; unlabeled burst messages took the previous message's time | `date` from date separators, burst times inferred (`time_source`: `label` / `inferred`), sender carried forward; channel banners, other people's continuation messages and shared-card titles never taken for `(me)` or a sender (`author: null` when the evidence disagrees) |
 | Older messages | Only the initially loaded rows | Scrollback (`--scrollback`, time-bounded) |
 | Long messages | Only what the bubble shows, not flagged | Cut messages flagged (`truncated`); `--full-text` fetches the full text (experimental) |
 | Closing windows | First button found, or Cmd+W | Only the window's close button; otherwise left open and reported |
@@ -199,7 +199,7 @@ may need to be added again.
 swift build -c release
 mkdir -p ~/.local/bin
 install -m 0755 .build/release/kktcli ~/.local/bin/kktcli
-kktcli --version   # 0.2.0 (based on kmsg 1.260921.0)
+kktcli --version   # 0.2.1 (based on kmsg 1.260921.0)
 kktcli status      # Accessibility permission, KakaoTalk running and logged in
 ```
 

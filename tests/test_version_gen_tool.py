@@ -55,7 +55,7 @@ class VersionGenToolTests(unittest.TestCase):
                 self.assertIn("VERSION must be MAJOR.MINOR.PATCH", f"{result.stdout}\n{result.stderr}")
 
     def test_repository_version_and_upstream_credit(self) -> None:
-        self.assertEqual((REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.2.0")
+        self.assertEqual((REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.2.1")
         entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
         self.assertIn('static let base = "kmsg 1.260921.0"', entrypoint)
         self.assertIn('"\\(current) (based on \\(UpstreamVersion.base))"', entrypoint)

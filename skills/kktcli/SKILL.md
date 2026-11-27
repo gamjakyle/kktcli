@@ -106,8 +106,12 @@ field; on failure use `error.code`:
   switching to the chat list did not work; nothing was read or recorded. Ask the user to
   show KakaoTalk's chat list. A successful switch shows `meta.main_window:
   "switched_to_chat_tab"`.
+- `CHAT_LIST_FILTERED`: a query is left in KakaoTalk's chat search field and could not be
+  cleared; nothing was done. Ask the user to clear the search field.
 - `KAKAOTALK_IN_USE` (exit status 75): the user is using KakaoTalk. Tell them and retry
   later, not right away.
+- A message with `author: null` (`side: "unknown"`) has a sender kktcli could not establish.
+  Never treat it as the user's own message or guess the sender; say it is unknown.
 - `OPEN_CHAT_LIST`: the row is a 1:1 open chat that opens a list of conversations, which
   kktcli cannot read. Report it; do not try other ways to open it.
 
