@@ -62,7 +62,18 @@ final class RoomSession {
 
     private func listAccess() throws -> ChatListAccess {
         let (mainWindow, _) = try locator.requireMainWindow(allowOpenCommand: false, access: mainWindowAccess)
-        return try locator.verifiedAccess(in: mainWindow, activity: activity).access
+        let verified = try locator.verifiedAccess(in: mainWindow, activity: activity)
+        // A query left in the search field hides rooms, among them same-name rooms that make a
+        // name or chat_id ambiguous: the full list is restored first, or nothing is done.
+        if try ChatListRecoverer(kakao: kakao, runner: runner).clearLeftoverQuery(
+            in: mainWindow,
+            table: verified.access.table,
+            tableVerified: verified.verified,
+            activity: activity
+        ) {
+            return try locator.verifiedAccess(in: mainWindow, activity: activity).access
+        }
+        return verified.access
     }
 
     /// Rows whose normalized title is `normalizedName`, with their indices.

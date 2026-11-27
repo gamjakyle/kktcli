@@ -118,10 +118,20 @@ struct ChatsCommand: ParsableCommand {
         let (mainWindow, action) = try locator.requireMainWindow(allowOpenCommand: false, access: mainWindowAccess)
         // Only the verified chat list is read and recorded: another tab (e.g. 친구) is switched
         // away from with 창 > 채팅, or nothing is written and CHAT_LIST_UNAVAILABLE is reported.
-        let verified = try locator.verifiedAccess(in: mainWindow, activity: activity)
+        var verified = try locator.verifiedAccess(in: mainWindow, activity: activity)
         let actions = [earlyAction, action, verified.switched ? .switchedToChatTab : nil]
         if let report = ChatListLocator.MainWindowAction.report(actions) {
             FileHandle.standardError.write(Data("Note: KakaoTalk's main window: \(report).\n".utf8))
+        }
+        // A query left in the search field shows only the matching rooms, and `chats` lists every
+        // room: the full list is restored first, or nothing is listed or recorded.
+        if try ChatListRecoverer(kakao: kakao, runner: runner).clearLeftoverQuery(
+            in: mainWindow,
+            table: verified.access.table,
+            tableVerified: verified.verified,
+            activity: activity
+        ) {
+            verified = try locator.verifiedAccess(in: mainWindow, activity: activity)
         }
         runner.log("chats: verified chat list ready")
         let snapshots = ChatListScanner().scan(table: verified.access.table, limit: limit, trace: { message in

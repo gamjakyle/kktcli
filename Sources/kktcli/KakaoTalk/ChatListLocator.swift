@@ -268,8 +268,11 @@ struct ChatListLocator {
         let tab = MainWindowLayout.classifyTab(AXNodeReader.flatten(window.axElement, maxDepth: 4, budget: 300))
         let role = access.map { AXNodeReader.read($0.table).snapshot.role }
         let rows = access.map { Array(AXNodeReader.rows(of: $0.table).prefix(ChatListCheck.sampleSize)) } ?? []
-        let verification = ChatListCheck.verify(containerRole: role, tab: tab, summaries: rows.map { ChatListScanner.summarize(row: $0) })
-        runner.log("chat list: tab \(tab.rawValue), verification \(verification)")
+        // A query left in the search field filters the list (only read on the 채팅 tab).
+        let query = tab == .chats ? ChatListRecoverer.visibleSearchQuery(in: window) : nil
+        let summaries = rows.map { ChatListScanner.summarize(row: $0) }
+        let verification = ChatListCheck.verify(containerRole: role, tab: tab, summaries: summaries, searchQuery: query)
+        runner.log("chat list: tab \(tab.rawValue), search filter \(query == nil ? "none" : "active"), verification \(verification)")
         return verification
     }
 

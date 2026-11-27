@@ -141,8 +141,45 @@ struct ChatListRecoverer {
         var toggle: AXUIElement?
     }
 
-    /// Re-read before every press, so only currently verified elements are ever pressed.
+    /// The text of the chat list's search field when the field is visible and not empty, else
+    /// nil. Reads only; used to recognize a filtered chat list (`ChatListCheck`) and by `chats`,
+    /// which lists every room.
+    static func visibleSearchQuery(in mainWindow: UIElement) -> String? {
+        let controls = readControls(in: mainWindow)
+        guard controls.searchFieldVisible else { return nil }
+        let text = (controls.searchText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// For commands that need every room (`chats`, and `send`, `send-image` and `watch`, whose
+    /// name and chat_id checks must see every same-name room): when a query is left in the
+    /// visible search field, restores the full list with the same two presses as list recovery
+    /// (취소, then the 검색 toggle), after the activity guard. Returns false when there was no
+    /// query; throws CHAT_LIST_FILTERED, with nothing done, when the list stays filtered.
+    func clearLeftoverQuery(in mainWindow: UIElement, table: AXUIElement?, tableVerified: Bool, activity: UserActivityGuard) throws -> Bool {
+        guard Self.visibleSearchQuery(in: mainWindow) != nil else {
+            return false
+        }
+        try activity.waitUntilClear(.listRecovery)
+        let report = recover(in: mainWindow, table: table, registryRowCount: nil, targetLastSeenIndex: nil, tableVerified: tableVerified)
+        guard let report, report.restored else {
+            throw ReadFailure(
+                code: "CHAT_LIST_FILTERED",
+                message: "KakaoTalk's chat list is filtered by a query in its search field, and the full list could not be restored; nothing was done.",
+                hint: "Clear the search field in KakaoTalk's 채팅 tab and retry.",
+                details: report.map { ["list_recovery": $0.summary] } ?? [:]
+            )
+        }
+        FileHandle.standardError.write(Data("Note: cleared the query left in KakaoTalk's chat search field to see every room.\n".utf8))
+        return true
+    }
+
     private func readControls(in mainWindow: UIElement) -> Controls {
+        Self.readControls(in: mainWindow)
+    }
+
+    /// Re-read before every press, so only currently verified elements are ever pressed.
+    private static func readControls(in mainWindow: UIElement) -> Controls {
         var controls = Controls()
         let window = AXNodeReader.read(mainWindow.axElement)
 
