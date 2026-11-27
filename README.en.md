@@ -184,7 +184,7 @@ its SHA-256 and installs it as `~/.local/bin/kktcli`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash   # the latest release
-curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.1
 ```
 
 To build from source instead, run `./install.sh --from-source` in a clone of this

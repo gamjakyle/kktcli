@@ -2,7 +2,7 @@
 # Installs kktcli for the current macOS user.
 #
 #   curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
+#   curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.1
 #   ./install.sh --from-source        # in a checkout: build it and install the result
 #
 # On Apple silicon it downloads kktcli-<version>-macos-arm64.tar.gz and its .sha256 from the

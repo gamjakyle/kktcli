@@ -17,7 +17,7 @@ server, configuration and troubleshooting. Read the safety and policy section of
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash   # the latest release
-curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.1
 ```
 
 `install.sh` downloads `kktcli-<version>-macos-arm64.tar.gz` and its `.sha256` from the

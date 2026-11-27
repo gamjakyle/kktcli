@@ -178,7 +178,7 @@ SHA-256을 확인한 뒤 `~/.local/bin/kktcli`에 넣습니다.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash   # 최신 릴리스
-curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.0
+curl -fsSL https://raw.githubusercontent.com/gamjakyle/kktcli/main/install.sh | bash -s -- --version 0.2.1
 ```
 
 소스에서 빌드하려면 저장소를 클론한 폴더에서 `./install.sh --from-source`를 실행하세요.
