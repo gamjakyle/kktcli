@@ -38,6 +38,8 @@ public struct TranscriptItem: Equatable, Sendable {
 
     public var kind: Kind
     public var side: Side
+    /// The row starts another person's group: it shows their profile button (and name).
+    public var hasSenderHeader: Bool
     /// Name printed next to the bubble, when present.
     public var explicitAuthor: String?
     /// Resolved author: a name, "(me)", or nil when unknown.
@@ -66,6 +68,7 @@ public struct TranscriptItem: Equatable, Sendable {
     public init(
         kind: Kind,
         side: Side,
+        hasSenderHeader: Bool = false,
         explicitAuthor: String? = nil,
         author: String? = nil,
         body: String,
@@ -86,6 +89,7 @@ public struct TranscriptItem: Equatable, Sendable {
     ) {
         self.kind = kind
         self.side = side
+        self.hasSenderHeader = hasSenderHeader
         self.explicitAuthor = explicitAuthor
         self.author = author
         self.body = body
@@ -106,14 +110,16 @@ public struct TranscriptItem: Equatable, Sendable {
     }
 }
 
+/// Rows are measured against their own AXCell/AXRow frame (`TranscriptParser.referenceFrame`),
+/// read in the same snapshot as their content, never against a transcript frame read at
+/// another moment: such a frame goes stale when the window moves or resizes before the rows
+/// are read (live 2026-11-27: other people's unlabeled bubbles were then read as right
+/// aligned, i.e. as "(me)").
 public struct TranscriptParseOptions: Sendable {
-    /// Frame of the transcript scroll area; used to tell left (others) from right (me).
-    public var transcriptFrame: CGRect?
     /// Date in effect before the first row of the slice (from an earlier separator).
     public var initialDate: String?
 
-    public init(transcriptFrame: CGRect? = nil, initialDate: String? = nil) {
-        self.transcriptFrame = transcriptFrame
+    public init(initialDate: String? = nil) {
         self.initialDate = initialDate
     }
 }
@@ -127,6 +133,17 @@ public struct TranscriptParseOptions: Sendable {
 /// - continuation: content + meta, left aligned
 /// - me: content right aligned, meta to the LEFT of the content
 /// - meta: "오후 5:10, 안읽음 2" | "오후 5:10" | "안읽음 2" | nothing (bursts)
+///
+/// Live geometry (KakaoTalk 26.10.0, 380 pt wide window, 2026-11-27): the profile button is a
+/// 36 pt square 10 pt from the row's left edge and the name sits right of it; other people's
+/// bubbles start 60–65 pt from the left and end 80 pt or more before the right edge; mine end
+/// 18–23 pt before the right edge and start 105 pt or more from the left. Shared cards hold
+/// static texts of their own (a song title, say), which are content and never a sender name.
+///
+/// "(me)" is attributed only on positive evidence and never next to a contradiction: the
+/// side comes from the row's own geometry and its meta label, which must not disagree, and
+/// `resolveAuthors` checks every result against KakaoTalk's grouping rule. Anything else is
+/// side `.unknown` with a nil author.
 public enum TranscriptParser {
     public static let systemMessageIdentifier = "_NS:30"
     public static let profileDescription = "프로필"
@@ -140,6 +157,16 @@ public enum TranscriptParser {
     /// Content starting this close to the left edge and reaching the right edge spans the
     /// whole transcript (banners, cards); such rows are never attributed to "(me)".
     static let fullWidthLeftFraction: CGFloat = 0.15
+    /// Right-aligned content counts as mine only when its left gap exceeds its right gap by
+    /// at least this much (live: 105 pt or more against 23 pt or less).
+    static let minimumSideMargin: CGFloat = 40
+    /// How far content or labels may stick out of the frame they are compared with before the
+    /// comparison is not trusted (a window that moved while one row was read).
+    static let frameTolerance: CGFloat = 4
+    /// A profile button without its description: an untitled square of this size near the top
+    /// left corner of its row.
+    static let profileButtonSizes: ClosedRange<CGFloat> = 28...48
+    static let profileButtonMaxOffset: CGFloat = 24
 
     public static func parse(_ rows: [TranscriptRow], options: TranscriptParseOptions = TranscriptParseOptions()) -> [TranscriptItem] {
         var items: [TranscriptItem] = []
@@ -171,7 +198,7 @@ public enum TranscriptParser {
                 continue
             }
 
-            if let item = parseMessageRow(nodes: nodes, top: top, rowIndex: rowIndex, date: currentDate, transcriptFrame: options.transcriptFrame) {
+            if let item = parseMessageRow(nodes: nodes, top: top, rowIndex: rowIndex, date: currentDate) {
                 items.append(item)
             }
         }
@@ -185,15 +212,20 @@ public enum TranscriptParser {
         nodes: [AXNodeSnapshot],
         top: [Int],
         rowIndex: Int,
-        date: String?,
-        transcriptFrame: CGRect?
+        date: String?
     ) -> TranscriptItem? {
-        let profile = top.filter { nodes[$0].role == AXRoleName.button && nodes[$0].desc == profileDescription }
+        let reference = referenceFrame(of: nodes)
+        let profile = top.filter { isProfileButton(nodes[$0], reference: reference) }
         let metas = top.filter { nodes[$0].role == AXRoleName.staticText && KakaoText.isMetaLabel(nodes[$0].text) }
         let editedMarkers = top.filter { nodes[$0].role == AXRoleName.staticText && nodes[$0].text == editedMarker }
-        let names = top.filter {
-            nodes[$0].role == AXRoleName.staticText && !metas.contains($0) && !editedMarkers.contains($0)
-        }
+        // Only a header row (another person's profile button) names its sender: the first plain
+        // static text after the profile button. Every other static text is content, e.g. the
+        // title inside a shared card, and never a sender name.
+        let names = profile.first.flatMap { profileIndex in
+            top.first {
+                $0 > profileIndex && nodes[$0].role == AXRoleName.staticText && !metas.contains($0) && !editedMarkers.contains($0)
+            }
+        }.map { [$0] } ?? []
         let content = top.filter { !profile.contains($0) && !metas.contains($0) && !names.contains($0) && !editedMarkers.contains($0) }
 
         let textAreas = content.filter { nodes[$0].role == AXRoleName.textArea }
@@ -246,10 +278,10 @@ public enum TranscriptParser {
 
         let side = inferSide(
             nodes: nodes,
-            hasProfileOrName: !profile.isEmpty || !names.isEmpty,
+            hasSenderHeader: !profile.isEmpty,
             metas: metas,
             content: content,
-            transcriptFrame: transcriptFrame
+            reference: reference
         )
 
         var time: ClockTime?
@@ -276,6 +308,7 @@ public enum TranscriptParser {
         return TranscriptItem(
             kind: .message,
             side: side,
+            hasSenderHeader: !profile.isEmpty,
             explicitAuthor: names.first.map { nodes[$0].text },
             body: body,
             date: date,
@@ -293,42 +326,131 @@ public enum TranscriptParser {
         )
     }
 
-    private static func inferSide(
+    /// Side of a message row.
+    ///
+    /// A sender header (profile button) means another person. Without one, two independent
+    /// pieces of evidence are read: where the content sits inside the row's own frame
+    /// (`geometry`) and on which side of the bubble the meta label sits (`metaSide`). One of
+    /// them decides when the other is silent; when they disagree, or both are silent, the side
+    /// is `.unknown`. Content spanning the whole row (banners) is always `.unknown`.
+    static func inferSide(
         nodes: [AXNodeSnapshot],
-        hasProfileOrName: Bool,
+        hasSenderHeader: Bool,
         metas: [Int],
         content: [Int],
-        transcriptFrame: CGRect?
+        reference: CGRect?
     ) -> TranscriptItem.Side {
-        if hasProfileOrName {
+        if hasSenderHeader {
             return .other
         }
 
-        let contentFrames = content.compactMap { nodes[$0].frame }
-        let contentMinX = contentFrames.map(\.minX).min()
-        let contentMaxX = contentFrames.map(\.maxX).max()
-
-        var reachesRight: Bool?
-        if let contentMinX, let contentMaxX, let transcriptFrame, transcriptFrame.width > 0 {
-            let right = contentMaxX >= transcriptFrame.maxX - rightAlignmentSlack
-            let startsAtLeft = contentMinX <= transcriptFrame.minX + transcriptFrame.width * fullWidthLeftFraction
-            if right && startsAtLeft {
-                // Spans the whole transcript (channel banner, card): never a bubble of mine,
-                // whatever labels sit next to it.
-                return .unknown
-            }
-            reachesRight = right
-        }
-
-        if let metaFrame = metas.lazy.compactMap({ nodes[$0].frame }).first, let contentMinX {
-            // KakaoTalk puts my meta label to the LEFT of my bubble and others' to the right.
-            return metaFrame.minX < contentMinX ? .me : .other
-        }
-
-        guard let reachesRight else {
+        guard let contentBox = union(content.compactMap { nodes[$0].frame }) else {
             return .unknown
         }
-        return reachesRight ? .me : .other
+        // The bubble proper (text and images); small controls such as reaction buttons and
+        // card parts only count when there is nothing else.
+        let bubbleRoles: Set<String> = [AXRoleName.textArea, AXRoleName.image]
+        let bubble = union(content.filter { bubbleRoles.contains(nodes[$0].role) }.compactMap { nodes[$0].frame }) ?? contentBox
+
+        let geometry = geometry(of: bubble, in: reference)
+        if geometry == .fullWidth {
+            // Spans the whole row (channel banner, card): never a bubble of mine, whatever
+            // labels sit next to it.
+            return .unknown
+        }
+        let meta = metaSide(union(metas.compactMap { nodes[$0].frame }), bubble: bubble)
+
+        switch (meta, geometry) {
+        case (.me, .right), (.me, .ambiguous), (.me, .unavailable), (nil, .right):
+            return .me
+        case (.other, .left), (.other, .ambiguous), (.other, .unavailable), (nil, .left):
+            return .other
+        default:
+            // The two disagree, or neither says anything.
+            return .unknown
+        }
+    }
+
+    enum RowGeometry: Equatable {
+        /// Ends near the right edge and starts well inside: my bubble.
+        case right
+        /// Starts closer to the left edge than it ends to the right edge: another person's bubble.
+        case left
+        /// Starts near the left edge and ends near the right edge.
+        case fullWidth
+        case ambiguous
+        /// No reference frame, or the content lies outside it (an inconsistent snapshot).
+        case unavailable
+    }
+
+    /// Where `box` sits inside `reference` (the row's own frame).
+    static func geometry(of box: CGRect, in reference: CGRect?) -> RowGeometry {
+        guard let reference, reference.width > 0,
+              box.minX >= reference.minX - frameTolerance,
+              box.maxX <= reference.maxX + frameTolerance
+        else {
+            return .unavailable
+        }
+        let leftGap = box.minX - reference.minX
+        let rightGap = reference.maxX - box.maxX
+        if rightGap <= rightAlignmentSlack {
+            if leftGap <= reference.width * fullWidthLeftFraction {
+                return .fullWidth
+            }
+            return leftGap >= rightGap + minimumSideMargin ? .right : .ambiguous
+        }
+        return leftGap < rightGap ? .left : .ambiguous
+    }
+
+    /// KakaoTalk puts my meta label to the LEFT of my bubble and other people's to the right.
+    /// nil without a meta label or when it overlaps the bubble.
+    static func metaSide(_ meta: CGRect?, bubble: CGRect) -> TranscriptItem.Side? {
+        guard let meta else { return nil }
+        if meta.maxX <= bubble.minX + frameTolerance {
+            return .me
+        }
+        if meta.minX >= bubble.maxX - frameTolerance {
+            return .other
+        }
+        return nil
+    }
+
+    /// The frame a row's content is measured against: the row's own AXCell (else AXRow) frame,
+    /// read in the same snapshot as the content, so a window that moved or resized between
+    /// reads cannot shift one against the other. nil when the row has no frame: then only the
+    /// meta label can tell the side (`inferSide`).
+    static func referenceFrame(of nodes: [AXNodeSnapshot]) -> CGRect? {
+        for depth in [1, 0] {
+            if let frame = nodes.first(where: { $0.depth == depth })?.frame, frame.width > 0 {
+                return frame
+            }
+        }
+        return nil
+    }
+
+    /// The profile button that starts another person's group: described "프로필", or, should
+    /// the description change, an untitled square button of profile size at the top left
+    /// corner of the row.
+    static func isProfileButton(_ node: AXNodeSnapshot, reference: CGRect?) -> Bool {
+        guard node.role == AXRoleName.button else { return false }
+        if node.desc == profileDescription {
+            return true
+        }
+        guard (node.title ?? "").kktTrimmed.isEmpty, let frame = node.frame, let reference else {
+            return false
+        }
+        return abs(frame.width - frame.height) <= 2
+            && profileButtonSizes.contains(frame.width)
+            && frame.minX >= reference.minX - frameTolerance
+            && frame.minX - reference.minX <= profileButtonMaxOffset
+            && frame.minY >= reference.minY - frameTolerance
+            && frame.minY - reference.minY <= profileButtonMaxOffset
+    }
+
+    private static func union(_ frames: [CGRect]) -> CGRect? {
+        let usable = frames.filter { $0.width > 0 || $0.height > 0 }
+        guard let first = usable.first else { return nil }
+        return usable.dropFirst().reduce(first) { $0.union($1) }
     }
 
     /// Indices of `index` and all of its descendants in a depth-first flatten.
@@ -344,23 +466,107 @@ public enum TranscriptParser {
 
     // MARK: Authors
 
-    /// Carries the last explicit name forward to left-side continuation rows.
+    /// Authors, checked against how KakaoTalk groups messages.
+    ///
+    /// A group is one sender's run of messages: KakaoTalk prints the time only on its last
+    /// message, and another person's group after anyone else's message (mine included), a
+    /// system line or a date separator starts with their sender header (profile button and
+    /// name). Live 2026-11-27: every row after a date separator had a header; the same person
+    /// writing on in a later minute may get no new header. Groups are read as: message rows on
+    /// one date with nothing between them, up to and including the first row with a time
+    /// label; a header always starts a new group.
+    ///
+    /// - A group whose rows read as mine is "(me)".
+    /// - Another person's group with a header has the header's name. Without one it continues
+    ///   the other person's group directly above it (same author); at the start of the slice
+    ///   its header was not read (author nil, side kept).
+    /// - Contradictions, which KakaoTalk cannot produce, mean a side was misread: a group mixing
+    ///   my rows and another person's, a header-less group of another person directly below my
+    ///   group, a system line, an unknown or mixed group or a date change. Then every "(me)"
+    ///   involved becomes `.unknown`, and so does a header-less group with no author to
+    ///   continue. "(me)" is never kept next to evidence that it may be wrong.
     public static func resolveAuthors(_ items: inout [TranscriptItem]) {
-        var lastOther: String?
-        for index in items.indices where items[index].kind == .message {
-            switch items[index].side {
-            case .me:
-                items[index].author = TranscriptItem.meAuthor
-            case .other:
-                if let explicit = items[index].explicitAuthor {
-                    lastOther = explicit
-                    items[index].author = explicit
-                } else {
-                    items[index].author = lastOther
-                }
-            case .unknown, .system:
+        var groups: [ClosedRange<Int>] = []
+        var start = items.startIndex
+        while start < items.endIndex {
+            guard items[start].kind == .message else {
+                start += 1
+                continue
+            }
+            var end = start
+            while items[end].time == nil, end + 1 < items.endIndex {
+                let next = items[end + 1]
+                guard next.kind == .message, next.date == items[start].date, !next.hasSenderHeader else { break }
+                end += 1
+            }
+            groups.append(start...end)
+            start = end + 1
+        }
+
+        func demoteMine(_ range: ClosedRange<Int>) {
+            for index in range where items[index].side == .me {
+                items[index].side = .unknown
                 items[index].author = nil
             }
+        }
+
+        /// The group directly above, when nothing (system line, date change) lies between.
+        var above: (range: ClosedRange<Int>, side: TranscriptItem.Side, author: String?)?
+        for range in groups {
+            let first = items[range.lowerBound]
+            let sides = Set(items[range].map(\.side)).intersection([.me, .other])
+            let mixed = sides.count > 1
+            let adjacent = above.flatMap { previous in
+                previous.range.upperBound + 1 == range.lowerBound && items[previous.range.upperBound].date == first.date ? previous : nil
+            }
+
+            var otherSide = TranscriptItem.Side.other
+            var otherAuthor: String?
+            if first.hasSenderHeader {
+                otherAuthor = first.explicitAuthor
+            } else if sides.contains(.other) {
+                if range.lowerBound == items.startIndex {
+                    otherAuthor = nil
+                } else if let adjacent, adjacent.side == .other {
+                    otherAuthor = adjacent.author
+                } else {
+                    otherSide = .unknown
+                    if let adjacent, adjacent.side == .me {
+                        demoteMine(adjacent.range)
+                    }
+                }
+            }
+
+            for index in range {
+                switch items[index].side {
+                case .me:
+                    items[index].author = TranscriptItem.meAuthor
+                case .other:
+                    items[index].side = otherSide
+                    items[index].author = otherSide == .other ? otherAuthor : nil
+                case .unknown, .system:
+                    items[index].author = nil
+                }
+            }
+            if mixed {
+                demoteMine(range)
+            }
+
+            let groupSide: TranscriptItem.Side
+            if mixed {
+                groupSide = .unknown
+            } else if sides == [.me] {
+                groupSide = .me
+            } else if sides == [.other], otherSide == .other {
+                groupSide = .other
+            } else {
+                groupSide = .unknown
+            }
+            above = (range, groupSide, otherAuthor)
+        }
+
+        for index in items.indices where items[index].kind != .message {
+            items[index].author = nil
         }
     }
 

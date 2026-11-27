@@ -54,7 +54,7 @@ struct LongMessageTests {
 
     @Test("Parser marks the cut message truncated and keeps the visible text")
     func parserMarksTruncated() {
-        let items = TranscriptParser.parse([longRow(Self.cut)], options: TranscriptParseOptions(transcriptFrame: Fixture.transcriptFrame))
+        let items = TranscriptParser.parse([longRow(Self.cut)], options: TranscriptParseOptions())
         #expect(items.count == 1)
         #expect(items[0].truncated)
         #expect(items[0].cutText == Self.cut)

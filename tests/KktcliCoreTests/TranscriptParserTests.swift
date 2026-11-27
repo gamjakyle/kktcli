@@ -5,12 +5,12 @@ import Testing
 
 @Suite("Transcript parsing: dates, sides, authors, burst times")
 struct TranscriptParserTests {
-    private let options = TranscriptParseOptions(transcriptFrame: Fixture.transcriptFrame)
+    private let options = TranscriptParseOptions()
 
     private func messages(_ rows: [TranscriptRow], initialDate: String? = nil) -> [TranscriptItem] {
         let parsed = TranscriptParser.parse(
             rows,
-            options: TranscriptParseOptions(transcriptFrame: Fixture.transcriptFrame, initialDate: initialDate)
+            options: TranscriptParseOptions(initialDate: initialDate)
         )
         return parsed.filter { $0.kind == .message }
     }

@@ -239,7 +239,7 @@ struct StructuredTranscriptReader {
         {
             let parsed = TranscriptParser.parse(
                 tail.rows,
-                options: TranscriptParseOptions(transcriptFrame: parts.scrollFrame, initialDate: date)
+                options: TranscriptParseOptions(initialDate: date)
             )
             selected = TranscriptSelection.lastItems(parsed, limit: options.limit, includeSystem: options.includeSystem)
             usedEarlierSeparator = true
@@ -340,7 +340,7 @@ struct StructuredTranscriptReader {
 
     private func readTail(_ parts: TranscriptAXParts, options: TranscriptReadOptions) -> TailRead {
         let rowElements = AXNodeReader.rows(of: parts.table)
-        let parseOptions = TranscriptParseOptions(transcriptFrame: parts.scrollFrame)
+        let parseOptions = TranscriptParseOptions()
         let contextRowCap = max(400, options.limit * 3 + 200)
 
         var start = rowElements.count
